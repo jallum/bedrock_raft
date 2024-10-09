@@ -1,4 +1,4 @@
-defmodule Bedrock.MixProject do
+defmodule BedrockRaft.MixProject do
   use Mix.Project
 
   def project do
@@ -18,15 +18,12 @@ defmodule Bedrock.MixProject do
 
   # Run "mix help compile.app" to learn about applications.
   def application do
-    [
-      extra_applications: [:logger, :crypto]
-    ]
+    []
   end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
-    [
-    ]
+    []
     |> add_deps_for_dev_and_test()
   end
 
