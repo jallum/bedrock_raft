@@ -29,7 +29,7 @@ defprotocol Bedrock.Raft.Log do
   @doc """
   Mark all transactions up to and including the given transaction as committed.
   """
-  @spec commit_up_to(t(), Raft.transaction()) :: {:ok, t()}
+  @spec commit_up_to(t(), Raft.transaction_id()) :: {:ok, t()}
   def commit_up_to(t, transaction)
 
   @doc """
