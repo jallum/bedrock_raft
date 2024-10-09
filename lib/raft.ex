@@ -87,6 +87,17 @@ defmodule Bedrock.Raft do
   def log(t), do: t.mode.log
 
   @doc """
+  Return a new transaction ID for this protocol instance.
+  """
+  @spec next_transaction_id(t()) :: {:ok, t(), transaction_id()} | {:error, :not_the_leader}
+  def next_transaction_id(%{mode: %Leader{}} = t) do
+    {mode, id} = Leader.next_id(t.mode)
+    {:ok, %{t | mode: mode}, id}
+  end
+
+  def next_transaction_id(_t), do: {:error, :not_the_leader}
+
+  @doc """
   Return the node that this protocol instance is running on.
   """
   @spec me(t()) :: service()
@@ -116,7 +127,7 @@ defmodule Bedrock.Raft do
       do: t.mode.term
 
   @doc """
-  Return the curremt leader and term for the cluster.
+  Return the current leader and term for the cluster.
   """
   @spec leadership(t()) :: Raft.leadership()
   def leadership(t), do: {leader(t), term(t)}

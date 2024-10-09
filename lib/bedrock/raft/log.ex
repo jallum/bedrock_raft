@@ -8,6 +8,12 @@ defprotocol Bedrock.Raft.Log do
   alias Bedrock.Raft
 
   @doc """
+  Create a new log with the given term and sequence number in the format
+  expected by the log implementation.
+  """
+  def new_id(t, term, sequence)
+
+  @doc """
   Append the given block of transactions to the log, starting at the given
   previous transaction's id. If we can't find the previous transaction, we
   return an error.

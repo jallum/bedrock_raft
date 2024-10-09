@@ -16,6 +16,16 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLogTest do
     end
   end
 
+  describe "new_id/1" do
+    test "returns the initial transaction ID", %{log: log} do
+      assert Log.new_id(log, 0, 0) == TransactionID.encode({0, 0})
+    end
+
+    test "returns a new transaction ID", %{log: log} do
+      assert Log.new_id(log, 0, 1) == TransactionID.encode({0, 1})
+    end
+  end
+
   describe "append_transactions/3" do
     test "appends transactions to the log when the log is empty", %{log: log} do
       transaction_id_0 = TransactionID.encode({0, 0})
@@ -38,7 +48,11 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLogTest do
       transaction_2 = {transaction_2_id, :some_more_data}
       {:ok, log} = Log.append_transactions(log, transaction_1_id, [transaction_2])
 
-      assert :ets.tab2list(log.transactions) == [transaction_1, transaction_2]
+      assert Log.transactions_from(log, transaction_1_id, :newest) == [
+               transaction_2
+             ]
+
+      assert Log.transactions_from(log, transaction_2_id, :newest) == []
     end
 
     test "returns an error when the previous transaction is not found", %{log: log} do

@@ -63,6 +63,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     quorum
     term
     pongs
+    id_sequence
     newest_transaction_id
     last_consensus_transaction_id
     follower_tracking
@@ -93,6 +94,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       quorum: quorum,
       nodes: nodes,
       term: term,
+      id_sequence: 0,
       pongs: [],
       newest_transaction_id: Log.newest_transaction_id(log),
       last_consensus_transaction_id: Log.newest_safe_transaction_id(log),
@@ -103,6 +105,13 @@ defmodule Bedrock.Raft.Mode.Leader do
     |> reset_pongs()
     |> send_append_entries_to_followers()
     |> set_timer()
+  end
+
+  @spec next_id(t()) :: {t(), Raft.transaction_id()}
+  def next_id(t) do
+    next_id = t.id_sequence + 1
+    id = Log.new_id(t.log, t.term, t.id_sequence + 1)
+    {%{t | id_sequence: next_id}, id}
   end
 
   @doc """

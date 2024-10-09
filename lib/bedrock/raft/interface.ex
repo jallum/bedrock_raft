@@ -1,6 +1,12 @@
 defmodule Bedrock.Raft.Interface do
   alias Bedrock.Raft
 
+  defmacro __using__(_opts) do
+    quote do
+      @behaviour Bedrock.Raft.Interface
+    end
+  end
+
   @type cancel_timer_fn :: (-> :ok)
 
   @doc """

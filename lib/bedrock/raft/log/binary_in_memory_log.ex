@@ -23,6 +23,9 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLog do
     @initial_transaction_id TransactionID.encode({0, 0})
 
     @impl true
+    def new_id(_t, term, sequence), do: TransactionID.encode({term, sequence})
+
+    @impl true
     def append_transactions(t, @initial_transaction_id, transactions) do
       true =
         :ets.insert_new(

@@ -513,8 +513,6 @@ defmodule Bedrock.RaftTest do
   describe "Raft.Raft log interaction" do
     test "A three node cluster where we become the leader, and then we append an entry" do
       t0 = {0, 0}
-      t1 = {1, 0}
-      t2 = {1, 1}
 
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:undecided, 0} -> :ok end)
@@ -545,7 +543,10 @@ defmodule Bedrock.RaftTest do
 
       assert p |> Raft.am_i_the_leader?()
 
+      {:ok, p, t1} = p |> Raft.next_transaction_id()
       assert {:ok, p} = Raft.add_transaction(p, {t1, :data1})
+
+      {:ok, p, t2} = p |> Raft.next_transaction_id()
       assert {:ok, p} = Raft.add_transaction(p, {t2, :data2})
 
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
