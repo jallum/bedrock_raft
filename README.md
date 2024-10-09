@@ -1,4 +1,4 @@
-# Bedrock
+# Bedrock Raft
 
 **TODO: Add description**
 
@@ -10,7 +10,7 @@ by adding `bedrock` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:bedrock, "~> 0.1.0"}
+    {:bedrock_raft, "~> 0.3.0"}
   ]
 end
 ```
