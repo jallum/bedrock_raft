@@ -107,11 +107,11 @@ defmodule Bedrock.Raft.Mode.Leader do
     |> set_timer()
   end
 
-  @spec next_id(t()) :: {t(), Raft.transaction_id()}
+  @spec next_id(t()) :: {:ok, t(), Raft.transaction_id()}
   def next_id(t) do
     next_id = t.id_sequence + 1
     id = Log.new_id(t.log, t.term, t.id_sequence + 1)
-    {%{t | id_sequence: next_id}, id}
+    {:ok, %{t | id_sequence: next_id}, id}
   end
 
   @doc """

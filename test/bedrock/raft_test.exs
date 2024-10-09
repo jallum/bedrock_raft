@@ -543,11 +543,8 @@ defmodule Bedrock.RaftTest do
 
       assert p |> Raft.am_i_the_leader?()
 
-      {:ok, p, t1} = p |> Raft.next_transaction_id()
-      assert {:ok, p} = Raft.add_transaction(p, {t1, :data1})
-
-      {:ok, p, t2} = p |> Raft.next_transaction_id()
-      assert {:ok, p} = Raft.add_transaction(p, {t2, :data2})
+      assert {:ok, p, t1} = Raft.add_transaction(p, :data1)
+      assert {:ok, p, t2} = Raft.add_transaction(p, :data2)
 
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
 

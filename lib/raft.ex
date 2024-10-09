@@ -89,13 +89,14 @@ defmodule Bedrock.Raft do
   @doc """
   Return a new transaction ID for this protocol instance.
   """
-  @spec next_transaction_id(t()) :: {:ok, t(), transaction_id()} | {:error, :not_the_leader}
-  def next_transaction_id(%{mode: %Leader{}} = t) do
-    {mode, id} = Leader.next_id(t.mode)
-    {:ok, %{t | mode: mode}, id}
+  @spec next_transaction_id(t()) :: {:ok, t(), transaction_id()} | {:error, :not_leader}
+  def next_transaction_id(%{mode: %Leader{} = leader} = t) do
+    with {:ok, leader, txn_id} = Leader.next_id(leader) do
+      {:ok, %{t | mode: leader}, txn_id}
+    end
   end
 
-  def next_transaction_id(_t), do: {:error, :not_the_leader}
+  def next_transaction_id(_t), do: {:error, :not_leader}
 
   @doc """
   Return the node that this protocol instance is running on.
@@ -143,12 +144,13 @@ defmodule Bedrock.Raft do
   log. Transactions are not committed until the leader replicates them to a
   quorum of nodes. Transactions can only be submitted to the leader.
   """
-  @spec add_transaction(t(), Raft.transaction()) ::
-          {:ok, t()} | {:error, :not_leader}
-  def add_transaction(%{mode: %mode{}} = t, transaction)
+  @spec add_transaction(t(), transaction_payload :: any()) ::
+          {:ok, t(), transaction_id()} | {:error, :not_leader}
+  def add_transaction(%{mode: %mode{} = leader} = t, transaction_payload)
       when mode in [Leader] do
-    with {:ok, %Leader{} = leader} <- mode.add_transaction(t.mode, transaction) do
-      {:ok, %{t | mode: leader}}
+    with {:ok, leader, txn_id} = mode.next_id(leader),
+         {:ok, leader} <- mode.add_transaction(leader, {txn_id, transaction_payload}) do
+      {:ok, %{t | mode: leader}, txn_id}
     end
   end
 
