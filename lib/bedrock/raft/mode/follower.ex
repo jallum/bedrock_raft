@@ -142,15 +142,13 @@ defmodule Bedrock.Raft.Mode.Follower do
   end
 
   def try_commit_up_to(t, transaction_id) do
-    if Log.has_transaction_id?(t.log, transaction_id) do
-      Log.commit_up_to(t.log, transaction_id)
-      |> case do
-        {:ok, log} ->
-          %{t | log: log}
-          |> consensus_reached(transaction_id)
-      end
-    else
-      t
+    consensus_transaction_id = min(Log.newest_transaction_id(t.log), transaction_id)
+
+    Log.commit_up_to(t.log, consensus_transaction_id)
+    |> case do
+      {:ok, log} ->
+        %{t | log: log}
+        |> consensus_reached(consensus_transaction_id)
     end
   end
 
@@ -196,12 +194,11 @@ defmodule Bedrock.Raft.Mode.Follower do
   defp record_term(t, term), do: %{t | term: term}
 
   defp consensus_reached(t, transaction_id)
-       when t.last_consensus_transaction_id == transaction_id,
-       do: t
-
-  defp consensus_reached(t, transaction_id) do
+       when t.last_consensus_transaction_id < transaction_id do
     :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
 
     %{t | last_consensus_transaction_id: transaction_id}
   end
+
+  defp consensus_reached(t, _transaction_id), do: t
 end
