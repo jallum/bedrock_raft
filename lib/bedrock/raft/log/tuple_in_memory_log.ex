@@ -41,6 +41,8 @@ defmodule Bedrock.Raft.Log.TupleInMemoryLog do
       :ets.lookup(t.transactions, prev_transaction_id)
       |> case do
         [{^prev_transaction_id, _}] ->
+          true = :ets.match_delete(t.transactions, match_gt(prev_transaction_id))
+
           true =
             :ets.insert_new(
               t.transactions,
@@ -101,6 +103,10 @@ defmodule Bedrock.Raft.Log.TupleInMemoryLog do
         [{^from, _data} | transactions] -> transactions
         [] -> []
       end
+    end
+
+    def match_gt(gt) do
+      {:>, :"$1", {:const, gt}}
     end
 
     def match_lte(lte) do
