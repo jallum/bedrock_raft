@@ -137,7 +137,7 @@ defmodule Bedrock.Raft.Mode.Follower do
         %{t | log: log}
 
       {:error, :prev_transaction_not_found} ->
-        raise "prev_transaction_not_found"
+        t
     end
   end
 
