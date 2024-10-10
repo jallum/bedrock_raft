@@ -543,26 +543,37 @@ defmodule Bedrock.RaftTest do
 
       assert p |> Raft.am_i_the_leader?()
 
+      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [{_t1, :data1}], ^t0} ->
+        :ok
+      end)
+
+      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [{_t1, :data1}], ^t0} ->
+        :ok
+      end)
+
       assert {:ok, p, t1} = Raft.add_transaction(p, :data1)
+
+      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, _t1, [{_t2, :data2}], ^t0} ->
+        :ok
+      end)
+
+      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, _t1, [{_t2, :data2}], ^t0} ->
+        :ok
+      end)
+
       assert {:ok, p, t2} = Raft.add_transaction(p, :data2)
 
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
 
-      expect(MockInterface, :send_event, fn :b,
-                                            {:append_entries, 1, ^t0,
-                                             [{^t1, :data1}, {^t2, :data2}], ^t0} ->
+      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t2, [], ^t0} ->
         :ok
       end)
 
-      expect(MockInterface, :send_event, fn :c,
-                                            {:append_entries, 1, ^t0,
-                                             [{^t1, :data1}, {^t2, :data2}], ^t0} ->
+      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t2, [], ^t0} ->
         :ok
       end)
 
-      p =
-        p
-        |> Raft.handle_event(:heartbeat, :timer)
+      p = p |> Raft.handle_event(:heartbeat, :timer)
 
       assert [{t1, :data1}, {t2, :data2}] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
       assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
