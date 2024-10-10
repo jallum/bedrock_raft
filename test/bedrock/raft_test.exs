@@ -607,26 +607,27 @@ defmodule Bedrock.RaftTest do
       p =
         Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
 
-      # some time passes, and we hear a from an active leader.
+      # some time passes, and we hear a from an active leader, trying to get us
+      # to append past the transactions we have in our log. we'll need to reply
+      # with the latest transaction we have.
 
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 1, ^t0} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:c, 1} -> :ok end)
 
-      p =
-        p
-        |> Raft.handle_event({:append_entries, 1, t1, [], t1}, :c)
+      p = p |> Raft.handle_event({:append_entries, 1, t1, [{t2, :data1}], t1}, :c)
 
-      # the leader responds with a new set of transactions, and we append them to
-      # our log.
+      # the leader responds with a new set of transactions, beginning where we
+      # left off, and we append them to our log. we also acknowledge the leader.
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 1, ^t2} -> :ok end)
       expect(MockInterface, :consensus_reached, fn _, ^t2 -> :ok end)
 
-      p =
-        p
-        |> Raft.handle_event({:append_entries, 1, t0, [{t1, :data1}, {t2, :data2}], t2}, :c)
+      p = p |> Raft.handle_event({:append_entries, 1, t0, [{t1, :data1}, {t2, :data2}], t2}, :c)
 
+      # we should have the transactions in our log, and the latest transaction
+      # should be the one we just appended. the latest safe transaction should
+      # be the one we just appended as well.
       assert [{t1, :data1}, {t2, :data2}] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
       assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
       assert t2 == p |> Raft.log() |> Log.newest_safe_transaction_id()
