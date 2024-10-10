@@ -117,7 +117,7 @@ defmodule Bedrock.Raft.Mode.Follower do
         |> record_leader(leader)
         |> record_term(leader_term)
         |> try_to_append_transactions(prev_transaction, transactions)
-        |> commit_up_to(commit_transaction)
+        |> try_commit_up_to(commit_transaction)
         |> send_append_entries_reply()
 
       if leadership_changed do
@@ -141,12 +141,16 @@ defmodule Bedrock.Raft.Mode.Follower do
     end
   end
 
-  def commit_up_to(t, transaction_id) do
-    Log.commit_up_to(t.log, transaction_id)
-    |> case do
-      {:ok, log} ->
-        %{t | log: log}
-        |> consensus_reached(transaction_id)
+  def try_commit_up_to(t, transaction_id) do
+    if Log.has_transaction_id?(t.log, transaction_id) do
+      Log.commit_up_to(t.log, transaction_id)
+      |> case do
+        {:ok, log} ->
+          %{t | log: log}
+          |> consensus_reached(transaction_id)
+      end
+    else
+      t
     end
   end
 

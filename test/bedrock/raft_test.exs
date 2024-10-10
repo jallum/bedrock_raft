@@ -612,7 +612,6 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 1, ^t0} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:c, 1} -> :ok end)
-      expect(MockInterface, :consensus_reached, fn _, ^t1 -> :ok end)
 
       p =
         p
