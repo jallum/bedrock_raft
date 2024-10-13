@@ -169,7 +169,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       )
     end
 
-    {:ok, t}
+    {:ok, t |> send_append_entries_to_followers(false)}
   end
 
   @doc """
@@ -219,8 +219,8 @@ defmodule Bedrock.Raft.Mode.Leader do
        |> cancel_timer()
        |> set_timer()}
 
-  @spec send_append_entries_to_followers(t()) :: t()
-  def send_append_entries_to_followers(t) do
+  @spec send_append_entries_to_followers(t(), send_empty_packets :: boolean()) :: t()
+  def send_append_entries_to_followers(t, send_empty_packets \\ true) do
     newest_safe_transaction_id = newest_safe_transaction_id(t)
 
     {:ok, log} =
@@ -247,10 +247,12 @@ defmodule Bedrock.Raft.Mode.Leader do
         )
       end
 
-      apply(t.interface, :send_event, [
-        follower,
-        {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
-      ])
+      if send_empty_packets || newest_safe_transaction_id != prev_transaction_id do
+        apply(t.interface, :send_event, [
+          follower,
+          {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
+        ])
+      end
     end)
 
     %{t | log: log}

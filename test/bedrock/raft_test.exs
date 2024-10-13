@@ -92,7 +92,7 @@ defmodule Bedrock.RaftTest do
     end
   end
 
-  describe "Raft.Raft elections" do
+  describe "Raft elections" do
     test "A happy-path election between three nodes that we started" do
       t0 = {0, 0}
 
@@ -394,7 +394,7 @@ defmodule Bedrock.RaftTest do
       assert {:undecided, 1} = Raft.leadership(p)
     end
 
-    test "In a three node cluster, after winning a successful election during a network split, a new leader was elected" do
+    test "In a three node cluster, after winning a successful election during a network split, a new leader was elected with no other missed transactions" do
       t0 = {0, 0}
       t1 = {2, 0}
 
@@ -422,6 +422,8 @@ defmodule Bedrock.RaftTest do
         |> Raft.handle_event({:append_entries_ack, 1, t0}, :b)
         |> Raft.handle_event(:heartbeat, :timer)
 
+      assert :ok = verify!()
+
       assert {:a, 1} = Raft.leadership(p)
 
       # Packets were dropped, :a became separated, an election was held and a
@@ -430,9 +432,9 @@ defmodule Bedrock.RaftTest do
 
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :consensus_reached, fn _, ^t1 -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t1} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:c, 2} -> :ok end)
-      expect(MockInterface, :consensus_reached, fn _, ^t1 -> :ok end)
 
       p = p |> Raft.handle_event({:append_entries, 2, t0, [{t1, :data1}], t1}, :c)
 
@@ -440,7 +442,7 @@ defmodule Bedrock.RaftTest do
     end
   end
 
-  describe "Raft.Raft quorum failures" do
+  describe "Raft quorum failures" do
     test "A three node cluster where we are the leader, and quorum fails" do
       t0 = {0, 0}
 
@@ -510,7 +512,7 @@ defmodule Bedrock.RaftTest do
     end
   end
 
-  describe "Raft.Raft log interaction" do
+  describe "Raft log interaction" do
     test "A three node cluster where we become the leader, and then we append an entry" do
       t0 = {0, 0}
 
