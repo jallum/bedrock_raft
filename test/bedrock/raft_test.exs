@@ -440,6 +440,64 @@ defmodule Bedrock.RaftTest do
 
       assert {:c, 2} = Raft.leadership(p)
     end
+
+    test "In a three node cluster, after winning a successful election during a network split, a new leader was elected with missed transactions" do
+      t0 = {0, 0}
+      t1 = {2, 0}
+      t2 = {2, 1}
+
+      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:undecided, 0} -> :ok end)
+      expect(MockInterface, :leadership_changed, fn {:undecided, 1} -> :ok end)
+      expect(MockInterface, :send_event, fn :b, {:request_vote, 1, ^t0} -> :ok end)
+      expect(MockInterface, :send_event, fn :c, {:request_vote, 1, ^t0} -> :ok end)
+      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
+      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
+      expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
+      expect(MockInterface, :ignored_event, fn {:vote, 1}, :b -> :ok end)
+      expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
+      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
+
+      p =
+        Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
+        |> Raft.handle_event(:election, :timer)
+        |> Raft.handle_event({:vote, 1}, :c)
+        |> Raft.handle_event({:vote, 1}, :b)
+        |> Raft.handle_event({:append_entries_ack, 1, t0}, :c)
+        |> Raft.handle_event({:append_entries_ack, 1, t0}, :b)
+        |> Raft.handle_event(:heartbeat, :timer)
+
+      assert :ok = verify!()
+
+      assert {:a, 1} = Raft.leadership(p)
+
+      # Packets were dropped, :a became separated, an election was held and a
+      # new leader, :c, was elected. After the split was healed, :a receives a
+      # heartbeat from the new leader in term 2, but is missing transactions.
+      # :a will request the missing transactions from the new leader.
+
+      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t0} -> :ok end)
+      expect(MockInterface, :leadership_changed, fn {:c, 2} -> :ok end)
+
+      p = p |> Raft.handle_event({:append_entries, 2, t1, [{t2, :data1}], t1}, :c)
+
+      # When :c sends the missing transactions, we add them to our log and note
+      # that fact by sending an ack. We reset our heartbeat timer. Since
+      # we've received all the transactions up to t1, we can now signal
+      # consensus up to that point.
+
+      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :consensus_reached, fn _, ^t1 -> :ok end)
+      expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t2} -> :ok end)
+      p = p |> Raft.handle_event({:append_entries, 2, t0, [{t0, :data1}, {t2, :data1}], t1}, :c)
+
+      assert {:c, 2} = Raft.leadership(p)
+    end
   end
 
   describe "Raft quorum failures" do
