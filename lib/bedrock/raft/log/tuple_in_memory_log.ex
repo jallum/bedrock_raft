@@ -28,7 +28,7 @@ defmodule Bedrock.Raft.Log.TupleInMemoryLog do
     @impl true
     def append_transactions(t, @initial_transaction_id, transactions) do
       true =
-        :ets.insert_new(
+        :ets.insert(
           t.transactions,
           transactions |> Enum.map(&normalize_transaction(t, &1))
         )
