@@ -1,4 +1,5 @@
 defmodule Bedrock.Raft.Mode.CandidateTest do
+  @moduledoc false
   use ExUnit.Case, async: true
   alias Bedrock.Raft.Mode.Candidate
   alias Bedrock.Raft.Log.InMemoryLog

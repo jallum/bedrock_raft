@@ -1,4 +1,13 @@
 defmodule Bedrock.Raft.Interface do
+  @moduledoc """
+  The `Bedrock.Raft.Interface` module defines the public interface for
+  interacting with the Raft consensus system.
+
+  Implementations of this behaviour provides functions that the Raft consensus
+  system needs in order to communicate, set timers and handle events. This
+  allows the system to be used in a variety of contexts, and gives the user full
+  control over how messages are sent and received.
+  """
   alias Bedrock.Raft
 
   defmacro __using__(_opts) do
@@ -25,8 +34,8 @@ defmodule Bedrock.Raft.Interface do
   """
   @callback timer(
               name :: atom(),
-              min_millis :: non_neg_integer(),
-              max_millis :: non_neg_integer()
+              min_ms :: non_neg_integer(),
+              max_ms :: non_neg_integer()
             ) ::
               cancel_timer_fn()
 

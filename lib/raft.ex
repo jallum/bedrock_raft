@@ -91,9 +91,9 @@ defmodule Bedrock.Raft do
   """
   @spec next_transaction_id(t()) :: {:ok, t(), transaction_id()} | {:error, :not_leader}
   def next_transaction_id(%{mode: %Leader{} = leader} = t) do
-    with {:ok, leader, txn_id} = Leader.next_id(leader) do
-      {:ok, %{t | mode: leader}, txn_id}
-    end
+    leader
+    |> Leader.next_id()
+    |> then(fn {:ok, leader, txn_id} -> {:ok, %{t | mode: leader}, txn_id} end)
   end
 
   def next_transaction_id(_t), do: {:error, :not_leader}
@@ -148,7 +148,7 @@ defmodule Bedrock.Raft do
           {:ok, t(), transaction_id()} | {:error, :not_leader}
   def add_transaction(%{mode: %mode{} = leader} = t, transaction_payload)
       when mode in [Leader] do
-    with {:ok, leader, txn_id} = mode.next_id(leader),
+    with {:ok, leader, txn_id} <- mode.next_id(leader),
          {:ok, leader} <- mode.add_transaction(leader, {txn_id, transaction_payload}) do
       {:ok, %{t | mode: leader}, txn_id}
     end
@@ -185,7 +185,7 @@ defmodule Bedrock.Raft do
   def handle_event(
         %{mode: %mode{}} = t,
         {:request_vote, election_term, newest_transaction},
-        _from = candidate
+        candidate
       )
       when mode in [Follower] do
     {:ok, %Follower{} = follower} =
@@ -197,7 +197,7 @@ defmodule Bedrock.Raft do
   def handle_event(
         %{mode: %mode{}} = t,
         {:request_vote, election_term, newest_transaction},
-        _from = candidate
+        candidate
       )
       when mode in [Candidate, Leader] and election_term > t.mode.term do
     mode.cancel_timer(t.mode)
@@ -230,7 +230,7 @@ defmodule Bedrock.Raft do
   def handle_event(
         %{mode: %mode{}} = t,
         {:append_entries, term, prev_transaction, transactions, commit_transaction},
-        _from = leader
+        leader
       ) do
     mode.append_entries_received(
       t.mode,
@@ -261,7 +261,7 @@ defmodule Bedrock.Raft do
   def handle_event(
         %{mode: %mode{}} = t,
         {:append_entries_ack, term, newest_transaction},
-        _from = follower
+        follower
       )
       when mode in [Leader] do
     {:ok, %Leader{} = leader} =

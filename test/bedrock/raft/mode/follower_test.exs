@@ -1,4 +1,5 @@
 defmodule Bedrock.Raft.Mode.FollowerTest do
+  @moduledoc false
   use ExUnit.Case, async: true
   import Mox
 

@@ -1,4 +1,12 @@
 defmodule Bedrock.Raft.Log.TupleInMemoryLog do
+  @moduledoc """
+  This module implements a tuple in-memory log for use with the Raft consensus
+  algorithm. It assumes the use of tuple transactions ids in the form
+  {term, sequence}. The log is implemented using an ETS table with the
+  :ordered_set option, which maintains transactions in the order they were
+  inserted.
+  """
+
   alias Bedrock.Raft
   alias Bedrock.Raft.TransactionID
 

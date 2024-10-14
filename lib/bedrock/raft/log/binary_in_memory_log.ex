@@ -1,4 +1,11 @@
 defmodule Bedrock.Raft.Log.BinaryInMemoryLog do
+  @moduledoc """
+  This module implements a binary in-memory log for use with the Raft consensus
+  algorithm. It assumes the use of binary transaction IDs, which are encoded
+  tuples of the form {term, sequence}. The log is implemented using an ETS table
+  with the :ordered_set option, which maintains transactions in the order they
+  were inserted.
+  """
   alias Bedrock.Raft
   alias Bedrock.Raft.TransactionID
 

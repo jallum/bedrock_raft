@@ -1,4 +1,5 @@
 defmodule Bedrock.Raft.Mode.Leader.FollowerTrackingTest do
+  @moduledoc false
   use ExUnit.Case, async: true
 
   alias Bedrock.Raft.Mode.Leader.FollowerTracking
