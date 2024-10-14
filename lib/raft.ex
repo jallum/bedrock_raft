@@ -213,7 +213,7 @@ defmodule Bedrock.Raft do
       when mode in [Candidate] do
     mode.vote_received(t.mode, election_term, from)
     |> case do
-      :was_elected_leader ->
+      :i_was_elected_leader ->
         %{t | mode: Leader.new(term(t), t.quorum, t.nodes, log(t), t.interface)}
         |> notify_change_in_leadership()
 
@@ -236,7 +236,7 @@ defmodule Bedrock.Raft do
       leader
     )
     |> case do
-      {:error, :new_leader_elected} ->
+      :new_leader_elected ->
         {:ok, log} = Log.purge_unsafe_transactions(log(t))
 
         %{t | mode: Follower.new(term, log, t.interface, leader)}

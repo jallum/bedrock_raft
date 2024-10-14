@@ -54,7 +54,7 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
 
     test "returns :was_elected_leader when quorum is reached", %{candidate: candidate} do
       {:ok, candidate_with_vote} = Candidate.vote_received(candidate, 1, :b)
-      assert :was_elected_leader = Candidate.vote_received(candidate_with_vote, 1, :c)
+      assert :i_was_elected_leader = Candidate.vote_received(candidate_with_vote, 1, :c)
     end
   end
 
@@ -68,7 +68,7 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
     end
 
     test "returns :new_leader_elected when leader's term is greater", %{candidate: candidate} do
-      {:error, :new_leader_elected} =
+      :new_leader_elected =
         Candidate.append_entries_received(candidate, 2, {0, 0}, [], {0, 0}, :b)
     end
 

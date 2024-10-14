@@ -83,7 +83,7 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       commit_transaction = {2, 1}
       leader = :node_1
 
-      assert {:error, :new_leader_elected} =
+      assert :new_leader_elected =
                Follower.append_entries_received(
                  follower,
                  2,

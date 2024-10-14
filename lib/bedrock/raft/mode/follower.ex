@@ -112,7 +112,7 @@ defmodule Bedrock.Raft.Mode.Follower do
           commit_transaction :: Raft.transaction(),
           from :: Raft.service()
         ) ::
-          {:ok, t()} | {:error, :new_leader_elected}
+          {:ok, t()} | :new_leader_elected
   def append_entries_received(
         t,
         leader_term,
@@ -127,7 +127,7 @@ defmodule Bedrock.Raft.Mode.Follower do
 
       leader_term != t.term || leader != t.leader ->
         t |> cancel_timer()
-        {:error, :new_leader_elected}
+        :new_leader_elected
 
       true ->
         t

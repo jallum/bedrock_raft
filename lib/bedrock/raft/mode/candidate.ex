@@ -87,7 +87,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
   we'll return an indication that we've been elected leader.
   """
   @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
-          :was_elected_leader | {:ok, t()}
+          :i_was_elected_leader | {:ok, t()}
   def vote_received(t, voting_term, follower) when voting_term == t.term do
     if follower in t.votes do
       {:ok, t}
@@ -96,7 +96,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
 
       if length(votes) >= t.quorum do
         t |> cancel_timer()
-        :was_elected_leader
+        :i_was_elected_leader
       else
         {:ok, %{t | votes: votes}}
       end
@@ -118,7 +118,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
           commit_transaction :: Raft.transaction(),
           from :: Raft.service()
         ) ::
-          {:ok, t()} | {:error, :new_leader_elected}
+          {:ok, t()} | :new_leader_elected
   def append_entries_received(
         t,
         leader_term,
@@ -129,7 +129,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
       ) do
     if leader_term >= t.term do
       t |> cancel_timer()
-      {:error, :new_leader_elected}
+      :new_leader_elected
     else
       {:ok, t}
     end
