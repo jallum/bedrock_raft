@@ -199,7 +199,7 @@ defmodule Bedrock.Raft do
         {:request_vote, election_term, newest_transaction},
         _from = candidate
       )
-      when mode in [Candidate] and election_term > t.mode.term do
+      when mode in [Candidate, Leader] and election_term > t.mode.term do
     mode.cancel_timer(t.mode)
 
     {:ok, %Follower{} = follower} =
@@ -221,6 +221,11 @@ defmodule Bedrock.Raft do
         %{t | mode: candidate}
     end
   end
+
+  def handle_event(%{mode: %mode{}} = t, {:vote, _election_term}, _from)
+      when mode in [Follower, Leader],
+      # Ignored
+      do: t
 
   def handle_event(
         %{mode: %mode{}} = t,

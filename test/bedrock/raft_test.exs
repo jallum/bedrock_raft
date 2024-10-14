@@ -160,7 +160,6 @@ defmodule Bedrock.RaftTest do
 
       # Assuming that node :c also responds to the request_vote, we've already
       # reached the quorum and become leader. We'll ignore the vote.
-      expect(MockInterface, :ignored_event, fn {:vote, 1}, :c -> :ok end)
 
       p = Raft.handle_event(p, {:vote, 1}, :c)
 
@@ -407,7 +406,6 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
-      expect(MockInterface, :ignored_event, fn {:vote, 1}, :b -> :ok end)
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
@@ -451,7 +449,6 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
-      expect(MockInterface, :ignored_event, fn {:vote, 1}, :b -> :ok end)
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
@@ -518,7 +515,6 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
-      expect(MockInterface, :ignored_event, fn {:vote, 1}, :b -> :ok end)
 
       p =
         Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
@@ -593,7 +589,6 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
-      expect(MockInterface, :ignored_event, fn {:vote, 1}, :b -> :ok end)
 
       p =
         p
