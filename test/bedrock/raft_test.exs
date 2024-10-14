@@ -490,6 +490,16 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t2} -> :ok end)
       p = p |> Raft.handle_event({:append_entries, 2, t0, [{t0, :data1}, {t2, :data1}], t1}, :c)
 
+      # When :c receives the ack, it will send us a new append entries message
+      # (that in this case, does not contain any new transactions) that tells
+      # us that consensus has been reached up to t2. We will reset our heartbeat
+      # timer and signal consensus up to t2.
+
+      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :consensus_reached, fn _, ^t2 -> :ok end)
+      expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t2} -> :ok end)
+      p = p |> Raft.handle_event({:append_entries, 2, t2, [], t2}, :c)
+
       assert {:c, 2} = Raft.leadership(p)
     end
   end
