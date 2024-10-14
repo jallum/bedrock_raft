@@ -237,7 +237,9 @@ defmodule Bedrock.Raft do
     )
     |> case do
       {:error, :new_leader_elected} ->
-        %{t | mode: Follower.new(term, log(t), t.interface, leader)}
+        {:ok, log} = Log.purge_unsafe_transactions(log(t))
+
+        %{t | mode: Follower.new(term, log, t.interface, leader)}
         |> notify_change_in_leadership()
 
       {:ok, %Leader{} = leader} ->
