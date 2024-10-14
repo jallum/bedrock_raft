@@ -41,8 +41,6 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLog do
       :ets.lookup(t.transactions, prev_transaction_id)
       |> case do
         [{^prev_transaction_id, _}] ->
-          true = :ets.match_delete(t.transactions, match_gt(prev_transaction_id))
-
           true =
             :ets.insert_new(
               t.transactions,
@@ -57,10 +55,16 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLog do
     end
 
     @impl true
+    def purge_unsafe_transactions(t) do
+      newest_txn_id = newest_safe_transaction_id(t)
+      :ets.select_delete(t.transactions, match_gt_for_delete(newest_txn_id))
+      {:ok, %{t | last_commit: newest_txn_id}}
+    end
+
+    @impl true
     def initial_transaction_id(_t), do: @initial_transaction_id
 
     @impl true
-    @spec commit_up_to(t(), Raft.binary_transaction_id()) :: {:ok, t()}
     def commit_up_to(t, transaction_id) when is_binary(transaction_id),
       do: {:ok, %{t | last_commit: transaction_id}}
 
@@ -105,22 +109,17 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLog do
       end
     end
 
-    def match_gt(gt) do
-      {:>, :"$1", {:const, gt}}
-    end
+    def match_gt_for_delete(gt),
+      do: [{{:"$1", :"$2"}, [{:>, :"$1", {:const, gt}}], [true]}]
 
-    def match_lte(lte) do
-      [
-        {{:"$1", :"$2"}, [{:"=<", :"$1", {:const, lte}}], [{{:"$1", :"$2"}}]}
-      ]
-    end
+    def match_lte(lte),
+      do: [{{:"$1", :"$2"}, [{:"=<", :"$1", {:const, lte}}], [{{:"$1", :"$2"}}]}]
 
-    def match_gte_lte(gte, lte) do
-      [
+    def match_gte_lte(gte, lte),
+      do: [
         {{:"$1", :"$2"}, [{:>=, :"$1", {:const, gte}}, {:"=<", :"$1", {:const, lte}}],
          [{{:"$1", :"$2"}}]}
       ]
-    end
 
     @doc """
     Ensure that the given transaction is in the correct format for the log,

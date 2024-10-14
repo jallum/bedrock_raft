@@ -27,6 +27,12 @@ defprotocol Bedrock.Raft.Log do
   def append_transactions(t, prev_transaction_id, transactions)
 
   @doc """
+  Purge all transactions that are not safely committed.
+  """
+  @spec purge_unsafe_transactions(t()) :: {:ok, t()}
+  def purge_unsafe_transactions(t)
+
+  @doc """
   Get the initial transaction for the log.
   """
   @spec initial_transaction_id(t()) :: Raft.transaction_id()
