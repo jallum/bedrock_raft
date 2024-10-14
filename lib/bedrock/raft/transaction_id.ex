@@ -44,7 +44,7 @@ defmodule Bedrock.Raft.TransactionID do
   transactions pass-through unchanged.
   """
   @spec decode(Raft.transaction_id()) :: Raft.tuple_transaction_id()
-  def decode({_term, _index} = transaciton_id), do: transaciton_id
+  def decode({_term, _index} = transaction_id), do: transaction_id
 
   def decode(value) when is_binary(value) do
     {term, encoded_index} = unpack(value)
