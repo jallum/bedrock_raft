@@ -44,8 +44,10 @@ defmodule Bedrock.Raft.Mode.Follower do
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
 
-  @spec new(Raft.election_term(), Log.t(), interface :: module()) :: t()
-  def new(term, log, interface) do
+  @spec new(Raft.election_term(), Log.t(), interface :: module(), leader :: Raft.service()) :: t()
+  def new(term, log, interface, leader \\ :undecided)
+
+  def new(term, log, interface, :undecided) do
     %__MODULE__{
       term: term,
       voted_for: nil,
@@ -55,6 +57,19 @@ defmodule Bedrock.Raft.Mode.Follower do
       interface: interface
     }
     |> set_timer()
+  end
+
+  def new(term, log, interface, leader) do
+    %__MODULE__{
+      term: term,
+      voted_for: leader,
+      last_consensus_transaction_id: Log.newest_safe_transaction_id(log),
+      leader: leader,
+      log: log,
+      interface: interface
+    }
+    |> set_timer()
+    |> send_append_entries_reply()
   end
 
   @doc """
@@ -97,7 +112,7 @@ defmodule Bedrock.Raft.Mode.Follower do
           commit_transaction :: Raft.transaction(),
           from :: Raft.service()
         ) ::
-          {:ok, t()} | {:ok, t(), :new_leader_elected}
+          {:ok, t()} | {:error, :new_leader_elected}
   def append_entries_received(
         t,
         leader_term,
@@ -106,25 +121,21 @@ defmodule Bedrock.Raft.Mode.Follower do
         commit_transaction,
         leader
       ) do
-    if leader_term < t.term do
-      {:ok, t}
-    else
-      leadership_changed = leader_term > t.term || (t.leader == :undecided and leader != t.leader)
+    cond do
+      leader_term < t.term ->
+        {:ok, t}
 
-      t =
+      leader_term != t.term || leader != t.leader ->
+        t |> cancel_timer()
+        {:error, :new_leader_elected}
+
+      true ->
         t
         |> reset_timer()
-        |> record_leader(leader)
-        |> record_term(leader_term)
         |> try_to_append_transactions(prev_transaction, transactions)
         |> try_commit_up_to(commit_transaction)
         |> send_append_entries_reply()
-
-      if leadership_changed do
-        {:ok, t, :new_leader_elected}
-      else
-        {:ok, t}
-      end
+        |> then(&{:ok, &1})
     end
   end
 
@@ -144,12 +155,10 @@ defmodule Bedrock.Raft.Mode.Follower do
   def try_commit_up_to(t, transaction_id) do
     consensus_transaction_id = min(Log.newest_transaction_id(t.log), transaction_id)
 
-    Log.commit_up_to(t.log, consensus_transaction_id)
-    |> case do
-      {:ok, log} ->
-        %{t | log: log}
-        |> consensus_reached(consensus_transaction_id)
-    end
+    {:ok, log} = Log.commit_up_to(t.log, consensus_transaction_id)
+
+    %{t | log: log}
+    |> notify_if_consensus_reached(consensus_transaction_id)
   end
 
   @spec send_append_entries_reply(t()) :: t()
@@ -187,18 +196,12 @@ defmodule Bedrock.Raft.Mode.Follower do
   defp set_timer(t),
     do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election, 150, 300])}
 
-  @spec record_leader(t(), Raft.service()) :: t()
-  defp record_leader(t, leader), do: %{t | leader: leader}
-
-  @spec record_term(t(), Raft.election_term()) :: t()
-  defp record_term(t, term), do: %{t | term: term}
-
-  defp consensus_reached(t, transaction_id)
+  defp notify_if_consensus_reached(t, transaction_id)
        when t.last_consensus_transaction_id < transaction_id do
     :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
 
     %{t | last_consensus_transaction_id: transaction_id}
   end
 
-  defp consensus_reached(t, _transaction_id), do: t
+  defp notify_if_consensus_reached(t, _transaction_id), do: t
 end

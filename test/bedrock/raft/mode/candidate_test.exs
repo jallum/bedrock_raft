@@ -68,10 +68,8 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
     end
 
     test "returns :new_leader_elected when leader's term is greater", %{candidate: candidate} do
-      {:ok, updated_candidate, :new_leader_elected} =
+      {:error, :new_leader_elected} =
         Candidate.append_entries_received(candidate, 2, {0, 0}, [], {0, 0}, :b)
-
-      assert updated_candidate.term == 1
     end
 
     test "ignores append_entries when leader's term is less than candidate's", %{

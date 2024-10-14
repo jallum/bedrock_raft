@@ -118,7 +118,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
           commit_transaction :: Raft.transaction(),
           from :: Raft.service()
         ) ::
-          {:ok, t()} | {:ok, t(), :new_leader_elected}
+          {:ok, t()} | {:error, :new_leader_elected}
   def append_entries_received(
         t,
         leader_term,
@@ -128,7 +128,8 @@ defmodule Bedrock.Raft.Mode.Candidate do
         _leader
       ) do
     if leader_term >= t.term do
-      {:ok, t |> cancel_timer(), :new_leader_elected}
+      t |> cancel_timer()
+      {:error, :new_leader_elected}
     else
       {:ok, t}
     end

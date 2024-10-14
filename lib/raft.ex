@@ -226,8 +226,7 @@ defmodule Bedrock.Raft do
         %{mode: %mode{}} = t,
         {:append_entries, term, prev_transaction, transactions, commit_transaction},
         _from = leader
-      )
-      when mode in [Follower] do
+      ) do
     mode.append_entries_received(
       t.mode,
       term,
@@ -237,42 +236,8 @@ defmodule Bedrock.Raft do
       leader
     )
     |> case do
-      {:ok, %Follower{} = follower, :new_leader_elected} ->
-        %{t | mode: follower}
-        |> notify_change_in_leadership()
-
-      {:ok, %Follower{} = follower} ->
-        %{t | mode: follower}
-    end
-  end
-
-  def handle_event(
-        %{mode: %mode{}} = t,
-        {:append_entries, term, prev_transaction, transactions, commit_transaction},
-        _from = leader
-      )
-      when mode in [Candidate, Leader] do
-    mode.append_entries_received(
-      t.mode,
-      term,
-      prev_transaction,
-      transactions,
-      commit_transaction,
-      leader
-    )
-    |> case do
-      {:ok, _t, :new_leader_elected} ->
-        {:ok, %Follower{} = follower, :new_leader_elected} =
-          Follower.new(term, log(t), t.interface)
-          |> Follower.append_entries_received(
-            term,
-            prev_transaction,
-            transactions,
-            commit_transaction,
-            leader
-          )
-
-        %{t | mode: follower}
+      {:error, :new_leader_elected} ->
+        %{t | mode: Follower.new(term, log(t), t.interface, leader)}
         |> notify_change_in_leadership()
 
       {:ok, %Leader{} = leader} ->
@@ -280,6 +245,9 @@ defmodule Bedrock.Raft do
 
       {:ok, %Candidate{} = candidate} ->
         %{t | mode: candidate}
+
+      {:ok, %Follower{} = follower} ->
+        %{t | mode: follower}
     end
   end
 

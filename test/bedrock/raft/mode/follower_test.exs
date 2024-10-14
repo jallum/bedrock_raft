@@ -2,7 +2,6 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
   use ExUnit.Case, async: true
   import Mox
 
-  alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
   alias Bedrock.Raft.MockInterface
   alias Bedrock.Raft.Mode.Follower
@@ -84,26 +83,15 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       commit_transaction = {2, 1}
       leader = :node_1
 
-      expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
-
-      expect(MockInterface, :consensus_reached, fn log, {2, 1} ->
-        assert Log.newest_safe_transaction_id(log) == {2, 1}
-        :ok
-      end)
-
-      expect(MockInterface, :send_event, fn :node_1, {:append_entries_ack, 2, {2, 1}} -> :ok end)
-
-      {:ok, follower, :new_leader_elected} =
-        Follower.append_entries_received(
-          follower,
-          2,
-          prev_transaction,
-          transactions,
-          commit_transaction,
-          leader
-        )
-
-      assert follower.term == 2
+      assert {:error, :new_leader_elected} =
+               Follower.append_entries_received(
+                 follower,
+                 2,
+                 prev_transaction,
+                 transactions,
+                 commit_transaction,
+                 leader
+               )
     end
 
     test "ignores append entries with a lower term" do

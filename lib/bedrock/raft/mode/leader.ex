@@ -169,7 +169,14 @@ defmodule Bedrock.Raft.Mode.Leader do
       )
     end
 
-    {:ok, t |> send_append_entries_to_followers(false)}
+    newest_safe_transaction_id = newest_safe_transaction_id(t)
+
+    {:ok, log} = Log.commit_up_to(t.log, newest_safe_transaction_id)
+
+    %{t | log: log}
+    |> consensus_reached(newest_safe_transaction_id)
+    |> send_append_entries_to_followers(false)
+    |> then(&{:ok, &1})
   end
 
   @doc """
@@ -185,7 +192,7 @@ defmodule Bedrock.Raft.Mode.Leader do
           commit_transaction :: Raft.transaction_id(),
           from :: Raft.service()
         ) ::
-          {:ok, t()} | {:ok, t(), :new_leader_elected}
+          {:ok, t()} | {:error, :new_leader_elected}
   def append_entries_received(
         t,
         leader_term,
@@ -195,7 +202,8 @@ defmodule Bedrock.Raft.Mode.Leader do
         _new_leader
       ) do
     if leader_term > t.term do
-      {:ok, t |> cancel_timer(), :new_leader_elected}
+      t |> cancel_timer()
+      {:error, :new_leader_elected}
     else
       {:ok, t}
     end
@@ -210,21 +218,18 @@ defmodule Bedrock.Raft.Mode.Leader do
   def timer_ticked(t) when length(t.pongs) < t.quorum,
     do: :quorum_failed
 
-  def timer_ticked(t),
-    do:
-      {:ok,
-       t
-       |> reset_pongs()
-       |> send_append_entries_to_followers()
-       |> cancel_timer()
-       |> set_timer()}
+  def timer_ticked(t) do
+    t
+    |> reset_pongs()
+    |> send_append_entries_to_followers()
+    |> cancel_timer()
+    |> set_timer()
+    |> then(&{:ok, &1})
+  end
 
   @spec send_append_entries_to_followers(t(), send_empty_packets :: boolean()) :: t()
   def send_append_entries_to_followers(t, send_empty_packets \\ true) do
     newest_safe_transaction_id = newest_safe_transaction_id(t)
-
-    {:ok, log} =
-      Log.commit_up_to(t.log, newest_safe_transaction_id)
 
     t.nodes
     |> Enum.each(fn follower ->
@@ -255,8 +260,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       end
     end)
 
-    %{t | log: log}
-    |> consensus_reached(newest_safe_transaction_id)
+    t
   end
 
   defp newest_safe_transaction_id(t) do

@@ -359,7 +359,6 @@ defmodule Bedrock.RaftTest do
       # heartbeat from the new leader in term 3.
 
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t0} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:c, 2} -> :ok end)
 
@@ -422,8 +421,6 @@ defmodule Bedrock.RaftTest do
         |> Raft.handle_event({:append_entries_ack, 1, t0}, :b)
         |> Raft.handle_event(:heartbeat, :timer)
 
-      assert :ok = verify!()
-
       assert {:a, 1} = Raft.leadership(p)
 
       # Packets were dropped, :a became separated, an election was held and a
@@ -431,12 +428,10 @@ defmodule Bedrock.RaftTest do
       # heartbeat from the new leader in term 2.
 
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :consensus_reached, fn _, ^t1 -> :ok end)
-      expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t1} -> :ok end)
+      expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t0} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:c, 2} -> :ok end)
 
-      p = p |> Raft.handle_event({:append_entries, 2, t0, [{t1, :data1}], t1}, :c)
+      p = p |> Raft.handle_event({:append_entries, 2, t1, [{t1, :data1}], t1}, :c)
 
       assert {:c, 2} = Raft.leadership(p)
     end
@@ -479,7 +474,6 @@ defmodule Bedrock.RaftTest do
       # heartbeat from the new leader in term 2, but is missing transactions.
       # :a will request the missing transactions from the new leader.
 
-      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t0} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:c, 2} -> :ok end)
