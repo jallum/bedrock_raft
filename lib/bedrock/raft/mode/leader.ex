@@ -169,12 +169,12 @@ defmodule Bedrock.Raft.Mode.Leader do
       )
     end
 
-    newest_safe_transaction_id = newest_safe_transaction_id(t)
+    new_txn_id = FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
 
-    {:ok, log} = Log.commit_up_to(t.log, newest_safe_transaction_id)
+    {:ok, log} = Log.commit_up_to(t.log, new_txn_id)
 
     %{t | log: log}
-    |> consensus_reached(newest_safe_transaction_id)
+    |> notify_if_consensus_reached(new_txn_id)
     |> send_append_entries_to_followers(false)
     |> then(&{:ok, &1})
   end
@@ -289,11 +289,11 @@ defmodule Bedrock.Raft.Mode.Leader do
   def reset_pongs(t),
     do: %{t | pongs: []}
 
-  defp consensus_reached(t, transaction_id)
+  defp notify_if_consensus_reached(t, transaction_id)
        when t.last_consensus_transaction_id == transaction_id,
        do: t
 
-  defp consensus_reached(t, transaction_id) do
+  defp notify_if_consensus_reached(t, transaction_id) do
     :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
 
     %{t | last_consensus_transaction_id: transaction_id}
