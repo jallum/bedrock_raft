@@ -436,7 +436,7 @@ defmodule Bedrock.RaftTest do
       assert {:c, 2} = Raft.leadership(p)
     end
 
-    test "In a three node cluster, after winning a successful election during a network split, a new leader was elected with missed transactions" do
+    test "In a three node cluster, after winning a successful election during a network split, a new leader was elected with new transactions that we missed" do
       t0 = {0, 0}
       t1 = {2, 0}
       t2 = {2, 1}
