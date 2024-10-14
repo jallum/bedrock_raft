@@ -107,18 +107,18 @@ defmodule Bedrock.Raft.Mode.Follower do
   @spec append_entries_received(
           t(),
           leader_term :: Raft.election_term(),
-          prev_transaction :: Raft.transaction(),
+          prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
-          commit_transaction :: Raft.transaction(),
+          commit_transaction_id :: Raft.transaction_id(),
           from :: Raft.service()
         ) ::
           {:ok, t()} | :new_leader_elected
   def append_entries_received(
         t,
         leader_term,
-        prev_transaction,
+        prev_transaction_id,
         transactions,
-        commit_transaction,
+        commit_transaction_id,
         leader
       ) do
     cond do
@@ -132,8 +132,8 @@ defmodule Bedrock.Raft.Mode.Follower do
       true ->
         t
         |> reset_timer()
-        |> try_to_append_transactions(prev_transaction, transactions)
-        |> try_commit_up_to(commit_transaction)
+        |> try_to_append_transactions(prev_transaction_id, transactions)
+        |> try_commit_up_to(commit_transaction_id)
         |> send_append_entries_reply()
         |> then(&{:ok, &1})
     end
@@ -141,8 +141,15 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   def try_to_append_transactions(t, _prev_transaction, []), do: t
 
-  def try_to_append_transactions(t, prev_transaction, transactions) do
-    Log.append_transactions(t.log, prev_transaction, transactions)
+  def try_to_append_transactions(t, prev_transaction_id, transactions) do
+    {prev_transaction_id, transactions} =
+      skip_transactions_already_in_log(
+        prev_transaction_id,
+        transactions,
+        Log.newest_transaction_id(t.log)
+      )
+
+    Log.append_transactions(t.log, prev_transaction_id, transactions)
     |> case do
       {:ok, log} ->
         %{t | log: log}
@@ -151,6 +158,24 @@ defmodule Bedrock.Raft.Mode.Follower do
         t
     end
   end
+
+  @spec skip_transactions_already_in_log(
+          prev_txn_id :: Raft.transaction_id(),
+          transactions :: [Raft.transaction()],
+          newest_txn_id :: Raft.transaction_id()
+        ) :: {Raft.transaction_id(), [Raft.transaction()]}
+  defp skip_transactions_already_in_log(prev_txn_id, [], _newest_txn_id), do: {prev_txn_id, []}
+
+  defp skip_transactions_already_in_log(
+         prev_txn_id,
+         [{txn_id, _payload} | remaining_transactions],
+         newest_txn_id
+       )
+       when prev_txn_id < newest_txn_id,
+       do: skip_transactions_already_in_log(txn_id, remaining_transactions, newest_txn_id)
+
+  defp skip_transactions_already_in_log(prev_txn_id, transactions, _newest_txn_id),
+    do: {prev_txn_id, transactions}
 
   def try_commit_up_to(t, transaction_id) do
     consensus_transaction_id = min(Log.newest_transaction_id(t.log), transaction_id)
