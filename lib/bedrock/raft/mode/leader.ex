@@ -56,6 +56,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     higher term, it steps down and reverts to a follower, recognizing the
     authority of the higher term.
   """
+  @behaviour Bedrock.Raft.Mode
 
   @type t :: %__MODULE__{}
   defstruct ~w[
@@ -119,9 +120,9 @@ defmodule Bedrock.Raft.Mode.Leader do
   transaction is not from this term, or is smaller than the newest transaction),
   we'll return an error.
   """
+  @impl true
   @spec add_transaction(t(), Raft.transaction()) ::
           {:ok, t()} | {:error, :out_of_order | :incorrect_term}
-
   def add_transaction(t, {transaction_id, _data} = transaction) do
     cond do
       transaction_id < t.newest_transaction_id ->
@@ -145,6 +146,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   A follower has responded to our ping. If we haven't recorded them yet for this
   round, do so now.
   """
+  @impl true
   @spec append_entries_ack_received(
           t(),
           Raft.election_term(),
@@ -171,7 +173,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       )
     end
 
-    FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
+    FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum - 1)
     |> case do
       :unknown ->
         {:ok, t}
@@ -181,7 +183,6 @@ defmodule Bedrock.Raft.Mode.Leader do
 
         %{t | log: log}
         |> notify_if_consensus_reached(new_txn_id)
-        |> send_append_entries_to_followers(false)
         |> then(&{:ok, &1})
     end
   end
@@ -191,6 +192,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   cancel any outstanding timers and signal that a new leader has been elected.
   Otherwise, we'll ignore the ping.
   """
+  @impl true
   @spec append_entries_received(
           t(),
           leader_term :: Raft.election_term(),
@@ -234,8 +236,8 @@ defmodule Bedrock.Raft.Mode.Leader do
     |> then(&{:ok, &1})
   end
 
-  @spec send_append_entries_to_followers(t(), send_empty_packets :: boolean()) :: t()
-  def send_append_entries_to_followers(t, send_empty_packets \\ true) do
+  @spec send_append_entries_to_followers(t()) :: t()
+  def send_append_entries_to_followers(t) do
     newest_safe_transaction_id = newest_safe_transaction_id(t)
 
     t.nodes
@@ -259,12 +261,10 @@ defmodule Bedrock.Raft.Mode.Leader do
         )
       end
 
-      if send_empty_packets || newest_safe_transaction_id != prev_transaction_id do
-        apply(t.interface, :send_event, [
-          follower,
-          {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
-        ])
-      end
+      apply(t.interface, :send_event, [
+        follower,
+        {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
+      ])
     end)
 
     t
@@ -297,12 +297,13 @@ defmodule Bedrock.Raft.Mode.Leader do
     do: %{t | pongs: []}
 
   defp notify_if_consensus_reached(t, transaction_id)
-       when t.last_consensus_transaction_id == transaction_id,
+       when t.last_consensus_transaction_id >= transaction_id,
        do: t
 
   defp notify_if_consensus_reached(t, transaction_id) do
     :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
 
     %{t | last_consensus_transaction_id: transaction_id}
+    |> send_append_entries_to_followers()
   end
 end

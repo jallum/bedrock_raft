@@ -436,9 +436,9 @@ defmodule Bedrock.RaftTest do
     end
 
     test "In a three node cluster, after winning a successful election during a network split, a new leader was elected with new transactions that we missed" do
-      t0 = {0, 0}
-      t1 = {2, 0}
-      t2 = {2, 1}
+      log = InMemoryLog.new(:tuple)
+
+      t0 = Log.initial_transaction_id(log)
 
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:undecided, 0} -> :ok end)
@@ -455,7 +455,7 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
 
       p =
-        Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
+        Raft.new(:a, [:b, :c], log, MockInterface)
         |> Raft.handle_event(:election, :timer)
         |> Raft.handle_event({:vote, 1}, :c)
         |> Raft.handle_event({:vote, 1}, :b)
@@ -476,6 +476,8 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t0} -> :ok end)
       expect(MockInterface, :leadership_changed, fn {:c, 2} -> :ok end)
 
+      {:ok, p, t1} = Raft.next_transaction_id(p)
+      {:ok, p, t2} = Raft.next_transaction_id(p)
       p = p |> Raft.handle_event({:append_entries, 2, t1, [{t2, :data1}], t1}, :c)
 
       # When :c sends the missing transactions, we add them to our log and note
@@ -504,7 +506,9 @@ defmodule Bedrock.RaftTest do
 
   describe "Raft quorum failures" do
     test "A three node cluster where we are the leader, and quorum fails" do
-      t0 = {0, 0}
+      log = InMemoryLog.new()
+
+      t0 = Log.initial_transaction_id(log)
 
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:undecided, 0} -> :ok end)
@@ -518,7 +522,7 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
 
       p =
-        Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
+        Raft.new(:a, [:b, :c], log, MockInterface)
         |> Raft.handle_event(:election, :timer)
         |> Raft.handle_event({:vote, 1}, :c)
         |> Raft.handle_event({:vote, 1}, :b)
@@ -556,6 +560,7 @@ defmodule Bedrock.RaftTest do
 
       assert {:undecided, 2} = Raft.leadership(p)
 
+      assert {:error, :not_leader} = Raft.next_transaction_id(p)
       assert {:error, :not_leader} = p |> Raft.add_transaction({{2, 0}, :data2})
 
       assert %Raft{
@@ -573,7 +578,12 @@ defmodule Bedrock.RaftTest do
 
   describe "Raft log interaction" do
     test "A three node cluster where we become the leader, and then we append an entry" do
-      t0 = {0, 0}
+      log = InMemoryLog.new()
+
+      t0 = Log.initial_transaction_id(log)
+
+      # We start off as a follower. Our election timer expires and we start an
+      # election for term 1. We send a request_vote message to :b and :c.
 
       expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:undecided, 0} -> :ok end)
@@ -583,8 +593,11 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:request_vote, 1, ^t0} -> :ok end)
 
       p =
-        Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
+        Raft.new(:a, [:b, :c], log, MockInterface)
         |> Raft.handle_event(:election, :timer)
+
+      # We receive a vote from :b and :c, and we become the leader. We send an
+      # append_entries message to :b and :c.
 
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
@@ -596,6 +609,8 @@ defmodule Bedrock.RaftTest do
         |> Raft.handle_event({:vote, 1}, :c)
         |> Raft.handle_event({:vote, 1}, :b)
 
+      # We receive an ack from :b and :c, for t0 and we reset our heartbeat timer.
+
       p =
         p
         |> Raft.handle_event({:append_entries_ack, 1, t0}, :b)
@@ -603,25 +618,40 @@ defmodule Bedrock.RaftTest do
 
       assert p |> Raft.am_i_the_leader?()
 
-      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [{_t1, :data1}], ^t0} ->
+      # We add a transaction (t1) to our log, and send it to :b and :c.
+
+      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [{t1, :data1}], ^t0} ->
+        send(self(), t1)
         :ok
       end)
 
-      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [{_t1, :data1}], ^t0} ->
+      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [{t1, :data1}], ^t0} ->
+        send(self(), t1)
         :ok
       end)
 
       assert {:ok, p, t1} = Raft.add_transaction(p, :data1)
+      assert_receive ^t1
+      assert_receive ^t1
 
-      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, _t1, [{_t2, :data2}], ^t0} ->
+      # We add another transaction (t2) to our log, and send it to :b and :c.
+
+      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t1, [{t2, :data2}], ^t0} ->
+        send(self(), t2)
         :ok
       end)
 
-      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, _t1, [{_t2, :data2}], ^t0} ->
+      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t1, [{t2, :data2}], ^t0} ->
+        send(self(), t2)
         :ok
       end)
 
       assert {:ok, p, t2} = Raft.add_transaction(p, :data2)
+      assert_receive ^t2
+      assert_receive ^t2
+
+      # Our heartbeat timer expires, and we send out a heartbeat to :b and :c.
+      # We note that the newest committed transaction is still t0
 
       expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
 
@@ -639,18 +669,25 @@ defmodule Bedrock.RaftTest do
       assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
       assert t0 == p |> Raft.log() |> Log.newest_safe_transaction_id()
 
-      expect(MockInterface, :timer, fn :heartbeat, 50, 50 -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t2, [], ^t2} -> :ok end)
-      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t2, [], ^t2} -> :ok end)
-      expect(MockInterface, :consensus_reached, fn _, ^t2 -> :ok end)
+      # :b acknowledges the heartbeat saying that it has received up to t2, and
+      # we make a note of that. we haven't heard from :c yet, so don't yet have
+      # a quorum to decide that consensus has been reached.
+
+      p = p |> Raft.handle_event({:append_entries_ack, 1, t2}, :b)
 
       assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
       assert t0 == p |> Raft.log() |> Log.newest_safe_transaction_id()
 
-      p =
-        p
-        |> Raft.handle_event({:append_entries_ack, 1, t2}, :c)
-        |> Raft.handle_event(:heartbeat, :timer)
+      # :c now acknowledges the heartbeat saying that it has received up to t2
+      # as well, and we make a note of that. we now have a quorum to decide that
+      # consensus has been reached up to t2. we then send out a new heartbeat
+      # to :b and :c to let them know that consensus has been reached up to t2.
+
+      expect(MockInterface, :consensus_reached, fn _, ^t2 -> :ok end)
+      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t2, [], ^t2} -> :ok end)
+      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t2, [], ^t2} -> :ok end)
+
+      p = p |> Raft.handle_event({:append_entries_ack, 1, t2}, :c)
 
       assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
       assert t2 == p |> Raft.log() |> Log.newest_safe_transaction_id()

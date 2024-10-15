@@ -29,6 +29,7 @@ defmodule Bedrock.Raft.Mode.Follower do
     leader and a follower, the follower rejects the new entries. The leader
     then works to bring the follower's log into consistency with its own.
   """
+  @behaviour Bedrock.Raft.Mode
 
   @type t :: %__MODULE__{}
   defstruct ~w[
@@ -104,6 +105,7 @@ defmodule Bedrock.Raft.Mode.Follower do
   cancel any outstanding timers and record that a new leader has been elected.
   Otherwise, we'll ignore the ping.
   """
+  @impl true
   @spec append_entries_received(
           t(),
           leader_term :: Raft.election_term(),

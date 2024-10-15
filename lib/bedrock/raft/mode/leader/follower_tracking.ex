@@ -45,15 +45,10 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   @spec newest_safe_transaction_id(t(), quorum :: non_neg_integer()) ::
           Raft.transaction_id() | :unknown
   def newest_safe_transaction_id(t, quorum) do
-    txn_ids = :ets.select(t, [{{:_, :_, :"$3"}, [], [:"$3"]}])
-
-    if length(txn_ids) < quorum do
-      :unknown
-    else
-      txn_ids
-      |> Enum.sort()
-      |> Enum.at(-quorum, :unknown)
-    end
+    t
+    |> :ets.select([{{:_, :_, :"$3"}, [], [:"$3"]}])
+    |> Enum.sort()
+    |> Enum.at(-quorum, :unknown)
   end
 
   @spec update_last_sent_transaction_id(t(), Raft.service(), Raft.transaction_id()) :: t()

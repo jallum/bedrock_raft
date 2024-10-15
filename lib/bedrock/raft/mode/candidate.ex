@@ -43,6 +43,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
     current term, the candidate reverts to a follower. This ensures that there
     is only one leader at a time in the cluster.
   """
+  @behaviour Bedrock.Raft.Mode
 
   @type t :: %__MODULE__{}
   defstruct ~w[
@@ -110,6 +111,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
   then we will cancel any outstanding timers and signal that a new leader has
   been elected. Otherwise, we'll ignore the ping.
   """
+  @impl true
   @spec append_entries_received(
           t(),
           leader_term :: Raft.election_term(),
