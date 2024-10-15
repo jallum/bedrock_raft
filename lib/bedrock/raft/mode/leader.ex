@@ -236,7 +236,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       prev_transaction_id =
         FollowerTracking.last_sent_transaction_id(t.follower_tracking, follower)
         |> case do
-          :unknown -> newest_safe_transaction_id
+          :unknown -> Log.initial_transaction_id(t.log)
           transaction_id -> transaction_id
         end
 
@@ -267,7 +267,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     t.follower_tracking
     |> FollowerTracking.newest_safe_transaction_id(t.quorum)
     |> case do
-      :unknown -> t.newest_transaction_id
+      :unknown -> Log.initial_transaction_id(t.log)
       transaction_id -> transaction_id
     end
   end
