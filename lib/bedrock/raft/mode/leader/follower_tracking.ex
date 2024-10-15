@@ -23,7 +23,7 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
     :ets.lookup(t, follower)
     |> case do
       [{^follower, last_sent_transaction_id, _newest_transaction_id}] -> last_sent_transaction_id
-      [] -> nil
+      [] -> :unknown
     end
   end
 
@@ -32,7 +32,7 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
     :ets.lookup(t, follower)
     |> case do
       [{^follower, _last_sent_transaction_id, newest_transaction_id}] -> newest_transaction_id
-      [] -> nil
+      [] -> :unknown
     end
   end
 
