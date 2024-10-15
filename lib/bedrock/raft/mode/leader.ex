@@ -171,14 +171,19 @@ defmodule Bedrock.Raft.Mode.Leader do
       )
     end
 
-    new_txn_id = FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
+    FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
+    |> case do
+      :unknown ->
+        {:ok, t}
 
-    {:ok, log} = Log.commit_up_to(t.log, new_txn_id)
+      new_txn_id ->
+        {:ok, log} = Log.commit_up_to(t.log, new_txn_id)
 
-    %{t | log: log}
-    |> notify_if_consensus_reached(new_txn_id)
-    |> send_append_entries_to_followers(false)
-    |> then(&{:ok, &1})
+        %{t | log: log}
+        |> notify_if_consensus_reached(new_txn_id)
+        |> send_append_entries_to_followers(false)
+        |> then(&{:ok, &1})
+    end
   end
 
   @doc """
