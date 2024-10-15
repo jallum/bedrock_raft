@@ -131,10 +131,10 @@ defmodule Bedrock.Raft.Mode.Leader do
         {:error, :incorrect_term}
 
       true ->
-        Log.append_transactions(t.log, t.newest_transaction_id, [transaction])
+        {:ok, log} = Log.append_transactions(t.log, t.newest_transaction_id, [transaction])
 
         t =
-          %{t | newest_transaction_id: transaction_id}
+          %{t | log: log, newest_transaction_id: transaction_id}
           |> send_append_entries_to_followers()
 
         {:ok, t}
