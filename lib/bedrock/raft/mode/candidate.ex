@@ -113,9 +113,9 @@ defmodule Bedrock.Raft.Mode.Candidate do
   @spec append_entries_received(
           t(),
           leader_term :: Raft.election_term(),
-          prev_transaction :: Raft.transaction(),
+          prev_transaction :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
-          commit_transaction :: Raft.transaction(),
+          commit_transaction :: Raft.transaction_id(),
           from :: Raft.service()
         ) ::
           {:ok, t()} | :new_leader_elected
