@@ -161,7 +161,9 @@ defmodule Bedrock.Raft.Mode.Leader do
         %{t | pongs: [follower | t.pongs]}
       end
 
-    if Log.has_transaction_id?(t.log, newest_transaction_id) do
+    if newest_transaction_id <= Log.newest_transaction_id(t.log) and
+         newest_transaction_id >
+           FollowerTracking.newest_transaction_id(t.follower_tracking, follower) do
       FollowerTracking.update_newest_transaction_id(
         t.follower_tracking,
         follower,
