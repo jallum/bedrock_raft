@@ -112,7 +112,8 @@ defmodule Bedrock.Raft.Mode.Candidate do
   def add_to_votes(t, follower),
     do: if(follower in t.votes, do: t, else: %{t | votes: [follower | t.votes]})
 
-  def become_leader_with_quorum(t) when length(t.votes) >= t.quorum, do: become_leader(t)
+  @spec become_leader_with_quorum(t()) :: {:ok, t()} | :become_leader
+  def become_leader_with_quorum(t) when length(t.votes) >= t.quorum, do: t |> become_leader()
   def become_leader_with_quorum(t), do: {:ok, t}
 
   @doc """

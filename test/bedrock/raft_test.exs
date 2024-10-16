@@ -613,8 +613,7 @@ defmodule Bedrock.RaftTest do
                mode: %Follower{
                  term: 1,
                  leader: :undecided,
-                 voted_for: nil,
-                 last_consensus_transaction_id: {0, 0}
+                 voted_for: nil
                },
                nodes: [:b, :c],
                quorum: 1

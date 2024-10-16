@@ -66,8 +66,6 @@ defmodule Bedrock.Raft.Mode.Leader do
     pongs
     missed_pongs
     id_sequence
-    newest_transaction_id
-    last_consensus_transaction_id
     follower_tracking
     cancel_timer_fn
     log
@@ -98,8 +96,6 @@ defmodule Bedrock.Raft.Mode.Leader do
       id_sequence: 0,
       pongs: [],
       missed_pongs: 0,
-      newest_transaction_id: Log.newest_transaction_id(log),
-      last_consensus_transaction_id: Log.newest_safe_transaction_id(log),
       follower_tracking: FollowerTracking.new(nodes),
       log: log,
       interface: interface
@@ -142,12 +138,13 @@ defmodule Bedrock.Raft.Mode.Leader do
   @spec add_transaction(t(), transaction_payload :: term()) :: {:ok, t(), Raft.transaction_id()}
   def add_transaction(t, transaction_payload) do
     with {:ok, t, new_txn_id} <- next_id(t),
+         last_txn_id <- Log.newest_transaction_id(t.log),
          {:ok, log} <-
-           Log.append_transactions(t.log, t.newest_transaction_id, [
+           Log.append_transactions(t.log, last_txn_id, [
              {new_txn_id, transaction_payload}
            ]) do
       t =
-        %{t | log: log, newest_transaction_id: new_txn_id}
+        %{t | log: log}
         |> send_append_entries_to_followers()
 
       {:ok, t, new_txn_id}
@@ -189,10 +186,8 @@ defmodule Bedrock.Raft.Mode.Leader do
         {:ok, t}
 
       new_txn_id ->
-        {:ok, log} = Log.commit_up_to(t.log, new_txn_id)
-
-        %{t | log: log}
-        |> notify_if_consensus_reached(new_txn_id)
+        t
+        |> try_to_reach_consensus(new_txn_id)
         |> then(&{:ok, &1})
     end
   end
@@ -290,6 +285,18 @@ defmodule Bedrock.Raft.Mode.Leader do
     end
   end
 
+  defp try_to_reach_consensus(t, transaction_id) do
+    if transaction_id > Log.newest_safe_transaction_id(t.log) do
+      {:ok, log} = Log.commit_up_to(t.log, transaction_id)
+      :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
+
+      %{t | log: log}
+      |> send_append_entries_to_followers()
+    else
+      t
+    end
+  end
+
   defp become_follower(t) do
     t |> cancel_timer()
     :become_follower
@@ -311,15 +318,4 @@ defmodule Bedrock.Raft.Mode.Leader do
   @spec reset_pongs(t()) :: t()
   def reset_pongs(t),
     do: %{t | pongs: [], missed_pongs: 0}
-
-  defp notify_if_consensus_reached(t, transaction_id)
-       when t.last_consensus_transaction_id >= transaction_id,
-       do: t
-
-  defp notify_if_consensus_reached(t, transaction_id) do
-    :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
-
-    %{t | last_consensus_transaction_id: transaction_id}
-    |> send_append_entries_to_followers()
-  end
 end

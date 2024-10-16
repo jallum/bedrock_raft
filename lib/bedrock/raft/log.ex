@@ -14,6 +14,13 @@ defprotocol Bedrock.Raft.Log do
   def new_id(t, term, sequence)
 
   @doc """
+  Purge the log of all transactions after the given id. If the newest safe
+  transaction id is greater than the given id, reset it to the given id.
+  """
+  @spec purge_transactions_after(t(), Raft.transaction_id()) :: {:ok, t()}
+  def purge_transactions_after(t, transaction_id)
+
+  @doc """
   Append the given block of transactions to the log, starting at the given
   previous transaction's id. If we can't find the previous transaction, we
   return an error.
@@ -25,12 +32,6 @@ defprotocol Bedrock.Raft.Log do
         ) ::
           {:ok, t()} | {:error, :prev_transaction_not_found}
   def append_transactions(t, prev_transaction_id, transactions)
-
-  @doc """
-  Purge all transactions that are not safely committed.
-  """
-  @spec purge_unsafe_transactions(t()) :: {:ok, t()}
-  def purge_unsafe_transactions(t)
 
   @doc """
   Get the initial transaction for the log.

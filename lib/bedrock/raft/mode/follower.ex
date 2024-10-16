@@ -156,7 +156,7 @@ defmodule Bedrock.Raft.Mode.Follower do
     |> reset_timer()
     |> note_change_in_leadership_if_necessary(from)
     |> try_to_append_transactions(prev_transaction_id, transactions)
-    |> try_commit_up_to(commit_transaction_id)
+    |> try_to_reach_consensus(min(Log.newest_transaction_id(t.log), commit_transaction_id))
     |> send_append_entries_ack()
     |> then(&{:ok, &1})
   end
@@ -170,20 +170,24 @@ defmodule Bedrock.Raft.Mode.Follower do
   def try_to_append_transactions(t, _prev_transaction, []), do: t
 
   def try_to_append_transactions(t, prev_transaction_id, transactions) do
+    newest_safe_transaction_id = Log.newest_safe_transaction_id(t.log)
+
     {prev_transaction_id, transactions} =
       skip_transactions_already_in_log(
         prev_transaction_id,
         transactions,
-        Log.newest_transaction_id(t.log)
+        newest_safe_transaction_id
       )
 
-    Log.append_transactions(t.log, prev_transaction_id, transactions)
-    |> case do
-      {:ok, log} ->
+    if prev_transaction_id < newest_safe_transaction_id do
+      t
+    else
+      with {:ok, log} <- Log.purge_transactions_after(t.log, prev_transaction_id),
+           {:ok, log} <- Log.append_transactions(log, prev_transaction_id, transactions) do
         %{t | log: log}
-
-      {:error, :prev_transaction_not_found} ->
-        t
+      else
+        {:error, :prev_transaction_not_found} -> t
+      end
     end
   end
 
@@ -205,21 +209,22 @@ defmodule Bedrock.Raft.Mode.Follower do
   defp skip_transactions_already_in_log(prev_txn_id, transactions, _newest_txn_id),
     do: {prev_txn_id, transactions}
 
-  def try_commit_up_to(t, transaction_id) do
-    consensus_transaction_id = min(Log.newest_transaction_id(t.log), transaction_id)
-
-    {:ok, log} = Log.commit_up_to(t.log, consensus_transaction_id)
-
-    %{t | log: log}
-    |> notify_if_consensus_reached(consensus_transaction_id)
-  end
-
   defp note_change_in_leadership_if_necessary(t, leader) when t.leader == :undecided do
     apply(t.interface, :leadership_changed, [{leader, t.term}])
     %{t | leader: leader}
   end
 
   defp note_change_in_leadership_if_necessary(t, _), do: t
+
+  defp try_to_reach_consensus(t, transaction_id) do
+    if transaction_id > Log.newest_safe_transaction_id(t.log) do
+      {:ok, log} = Log.commit_up_to(t.log, transaction_id)
+      :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
+      %{t | log: log}
+    else
+      t
+    end
+  end
 
   defp become_follower(t) do
     t |> cancel_timer()
@@ -262,14 +267,4 @@ defmodule Bedrock.Raft.Mode.Follower do
   @spec set_timer(t()) :: t()
   defp set_timer(t),
     do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election, 150, 300])}
-
-  defp notify_if_consensus_reached(t, transaction_id) do
-    if transaction_id >= Log.newest_safe_transaction_id(t.log) do
-      {:ok, log} = Log.commit_up_to(t.log, transaction_id)
-      :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
-      %{t | log: log}
-    else
-      t
-    end
-  end
 end

@@ -60,14 +60,14 @@ defmodule Bedrock.Raft do
     quorum = determine_majority([me | nodes]) - 1
 
     # Start with the newest term in the log.
-    initial_term = Log.newest_safe_transaction_id(log) |> TransactionID.term()
+    term = Log.newest_safe_transaction_id(log) |> TransactionID.term()
 
     # If we're the only node, we can be the leader.
     mode =
       if quorum == 0 do
-        Leader.new(initial_term, quorum, nodes, log, interface)
+        Leader.new(term, quorum, nodes, log, interface)
       else
-        Follower.new(initial_term, log, interface)
+        Follower.new(term, log, interface)
       end
 
     %__MODULE__{
