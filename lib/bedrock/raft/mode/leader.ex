@@ -63,8 +63,6 @@ defmodule Bedrock.Raft.Mode.Leader do
     nodes
     quorum
     term
-    pongs
-    missed_pongs
     id_sequence
     follower_tracking
     cancel_timer_fn
@@ -94,9 +92,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       nodes: nodes,
       term: term,
       id_sequence: 0,
-      pongs: [],
-      missed_pongs: 0,
-      follower_tracking: FollowerTracking.new(nodes),
+      follower_tracking: FollowerTracking.new(nodes, Log.newest_safe_transaction_id(log)),
       log: log,
       interface: interface
     }
@@ -165,13 +161,6 @@ defmodule Bedrock.Raft.Mode.Leader do
           {:ok, t()}
   def append_entries_ack_received(t, term, newest_transaction_id, _from = follower)
       when term == t.term do
-    t =
-      if follower in t.pongs do
-        t
-      else
-        %{t | pongs: [follower | t.pongs]}
-      end
-
     if newest_transaction_id <= Log.newest_transaction_id(t.log) do
       FollowerTracking.update_newest_transaction_id(
         t.follower_tracking,
@@ -217,28 +206,11 @@ defmodule Bedrock.Raft.Mode.Leader do
   The timer has ticked. We'll send notices to all the nodes, and start the
   timer again.
   """
-  @spec timer_ticked(t()) :: {:ok, t()} | :become_follower
-  def timer_ticked(t) when length(t.pongs) < t.quorum do
-    update_in(t.missed_pongs, &(1 + &1))
-    |> case do
-      %{missed_pongs: 5} ->
-        become_follower(t)
-
-      t ->
-        t
-        |> send_append_entries_to_followers()
-        |> cancel_timer()
-        |> set_timer()
-        |> then(&{:ok, &1})
-    end
-  end
-
+  @spec timer_ticked(t()) :: {:ok, t()}
   def timer_ticked(t) do
     t
-    |> reset_pongs()
     |> send_append_entries_to_followers()
-    |> cancel_timer()
-    |> set_timer()
+    |> reset_timer()
     |> then(&{:ok, &1})
   end
 
@@ -250,10 +222,6 @@ defmodule Bedrock.Raft.Mode.Leader do
     |> Enum.each(fn follower ->
       prev_transaction_id =
         FollowerTracking.last_sent_transaction_id(t.follower_tracking, follower)
-        |> case do
-          :unknown -> Log.initial_transaction_id(t.log)
-          transaction_id -> transaction_id
-        end
 
       transactions =
         Log.transactions_from(t.log, prev_transaction_id, :newest)
@@ -302,20 +270,17 @@ defmodule Bedrock.Raft.Mode.Leader do
     :become_follower
   end
 
-  @spec cancel_timer(t()) :: t()
-  def cancel_timer(t) when is_nil(t.cancel_timer_fn),
-    do: t
+  @spec reset_timer(t()) :: t()
+  defp reset_timer(t), do: t |> cancel_timer() |> set_timer()
 
-  def cancel_timer(t) do
+  @spec cancel_timer(t()) :: t()
+  defp cancel_timer(t) when is_nil(t.cancel_timer_fn), do: t
+
+  defp cancel_timer(t) do
     t.cancel_timer_fn.()
     %{t | cancel_timer_fn: nil}
   end
 
   @spec set_timer(t()) :: t()
-  def set_timer(t),
-    do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:heartbeat, 50, 50])}
-
-  @spec reset_pongs(t()) :: t()
-  def reset_pongs(t),
-    do: %{t | pongs: [], missed_pongs: 0}
+  defp set_timer(t), do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:heartbeat])}
 end

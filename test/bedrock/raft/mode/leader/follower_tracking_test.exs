@@ -7,7 +7,7 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTrackingTest do
   @followers [:f1, :f2, :f3]
 
   setup do
-    {:ok, table: FollowerTracking.new(@followers)}
+    {:ok, table: FollowerTracking.new(@followers, :unknown)}
   end
 
   test "new/1 initializes the ETS table with followers", %{table: table} do

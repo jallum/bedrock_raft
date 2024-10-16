@@ -84,18 +84,20 @@ defmodule Bedrock.Raft.Mode.Follower do
           Raft.election_term(),
           candidate :: Raft.service(),
           candidate_last_transaction_id :: Raft.transaction_id()
-        ) :: {:ok, t()}
-  def vote_requested(t, term, candidate, candidate_newest_transaction_id) do
-    if (term == t.term and is_nil(t.voted_for)) or
-         (term > t.term and candidate_newest_transaction_id >= Log.newest_transaction_id(t.log)) do
-      {:ok,
-       t
-       |> reset_timer()
-       |> vote_for(candidate, term)}
+        ) :: {:ok, t()} | :become_follower
+  def vote_requested(t, term, candidate, candidate_newest_transaction_id)
+      when term >= t.term and is_nil(t.voted_for) do
+    if candidate_newest_transaction_id >= Log.newest_transaction_id(t.log) do
+      t
+      |> reset_timer()
+      |> vote_for(candidate, term)
     else
-      {:ok, t}
+      t
     end
+    |> then(&{:ok, &1})
   end
+
+  def vote_requested(t, _, _, _), do: {:ok, t}
 
   @doc """
   """
@@ -237,6 +239,8 @@ defmodule Bedrock.Raft.Mode.Follower do
   end
 
   @spec send_append_entries_ack(t()) :: t()
+  defp send_append_entries_ack(t) when t.leader == :undecided, do: t
+
   defp send_append_entries_ack(t) do
     apply(t.interface, :send_event, [
       t.leader,
@@ -247,24 +251,22 @@ defmodule Bedrock.Raft.Mode.Follower do
   end
 
   @spec vote_for(t(), Raft.service(), Raft.election_term()) :: t()
-  defp vote_for(t, candidate, election_term) do
-    apply(t.interface, :send_event, [candidate, {:vote, election_term}])
-    %{t | voted_for: candidate, term: election_term}
+  defp vote_for(t, candidate, term) do
+    apply(t.interface, :send_event, [candidate, {:vote, term}])
+    %{t | voted_for: candidate, term: term}
   end
 
   @spec reset_timer(t()) :: t()
-  defp reset_timer(t),
-    do: t |> cancel_timer() |> set_timer()
+  defp reset_timer(t), do: t |> cancel_timer() |> set_timer()
 
   @spec cancel_timer(t()) :: t()
-  def cancel_timer(t) when is_nil(t.cancel_timer_fn), do: t
+  defp cancel_timer(t) when is_nil(t.cancel_timer_fn), do: t
 
-  def cancel_timer(t) do
+  defp cancel_timer(t) do
     t.cancel_timer_fn.()
     %{t | cancel_timer_fn: nil}
   end
 
   @spec set_timer(t()) :: t()
-  defp set_timer(t),
-    do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election, 150, 300])}
+  defp set_timer(t), do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election])}
 end

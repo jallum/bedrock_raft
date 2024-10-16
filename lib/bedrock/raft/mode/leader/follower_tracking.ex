@@ -11,28 +11,28 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
 
   alias Bedrock.Raft
 
-  @spec new(any()) :: t()
-  def new(followers) do
+  @spec new(followers :: [Raft.service()], initial_transaction_id :: Raft.transaction_id()) :: t()
+  def new(followers, initial_transaction_id) do
     t = :ets.new(:follower_tracking, [:set])
-    :ets.insert(t, followers |> Enum.map(&{&1, :unknown, :unknown}))
+    :ets.insert(t, followers |> Enum.map(&{&1, initial_transaction_id, initial_transaction_id}))
     t
   end
 
-  @spec last_sent_transaction_id(t(), Raft.service()) :: Raft.transaction_id() | :unknown
+  @spec last_sent_transaction_id(t(), Raft.service()) :: Raft.transaction_id()
   def last_sent_transaction_id(t, follower) do
     :ets.lookup(t, follower)
     |> case do
       [{^follower, last_sent_transaction_id, _newest_transaction_id}] -> last_sent_transaction_id
-      [] -> :unknown
+      [] -> raise "follower not found: #{inspect(follower)}"
     end
   end
 
-  @spec newest_transaction_id(t(), Raft.service()) :: Raft.transaction_id() | :unknown
+  @spec newest_transaction_id(t(), Raft.service()) :: Raft.transaction_id()
   def newest_transaction_id(t, follower) do
     :ets.lookup(t, follower)
     |> case do
       [{^follower, _last_sent_transaction_id, newest_transaction_id}] -> newest_transaction_id
-      [] -> :unknown
+      [] -> raise "follower not found: #{inspect(follower)}"
     end
   end
 

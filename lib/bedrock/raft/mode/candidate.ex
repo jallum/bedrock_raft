@@ -177,18 +177,6 @@ defmodule Bedrock.Raft.Mode.Candidate do
     :become_leader
   end
 
-  @spec set_timer(t()) :: t()
-  defp set_timer(t),
-    do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election, 150, 300])}
-
-  @spec cancel_timer(t()) :: t()
-  def cancel_timer(t) when is_nil(t.cancel_timer_fn), do: t
-
-  def cancel_timer(t) do
-    t.cancel_timer_fn.()
-    %{t | cancel_timer_fn: nil}
-  end
-
   defp clear_votes(t), do: %{t | votes: []}
 
   @spec request_votes_from_all_nodes(t()) :: t()
@@ -197,4 +185,15 @@ defmodule Bedrock.Raft.Mode.Candidate do
     t.nodes |> Enum.each(&apply(t.interface, :send_event, [&1, event]))
     t
   end
+
+  @spec cancel_timer(t()) :: t()
+  defp cancel_timer(t) when is_nil(t.cancel_timer_fn), do: t
+
+  defp cancel_timer(t) do
+    t.cancel_timer_fn.()
+    %{t | cancel_timer_fn: nil}
+  end
+
+  @spec set_timer(t()) :: t()
+  defp set_timer(t), do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election])}
 end

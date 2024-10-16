@@ -16,7 +16,7 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       term = 1
       log = InMemoryLog.new()
 
-      expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
 
       follower = Follower.new(term, log, MockInterface)
       assert follower.term == term
@@ -29,13 +29,14 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
     test "votes for a candidate when conditions are met" do
       term = 1
       log = InMemoryLog.new()
-      candidate = :node_1
-      candidate_last_transaction = :some_tx_id
 
-      expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
+      candidate = :node_1
+      candidate_last_transaction = {1, 1}
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface)
 
-      expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       expect(MockInterface, :send_event, fn ^candidate, {:vote, ^term} -> :ok end)
 
       {:ok, follower} =
@@ -48,12 +49,12 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       term = 1
       log = InMemoryLog.new()
       candidate = :node_1
-      candidate_last_transaction = :some_tx_id
+      candidate_last_transaction = {1, 1}
 
-      expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface)
 
-      expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       expect(MockInterface, :send_event, fn ^candidate, {:vote, ^term} -> :ok end)
 
       {:ok, follower} =
@@ -62,7 +63,7 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       assert follower.voted_for == candidate
 
       candidate = :node_2
-      candidate_last_transaction = :another_tx_id
+      candidate_last_transaction = {1, 2}
 
       {:ok, follower} =
         Follower.vote_requested(follower, term, candidate, candidate_last_transaction)
@@ -76,7 +77,7 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       term = 1
       log = InMemoryLog.new()
 
-      expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface)
 
       prev_transaction_id = {0, 0}
@@ -99,7 +100,7 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       term = 2
       log = InMemoryLog.new()
 
-      expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface)
 
       prev_transaction_id = :some_tx_id

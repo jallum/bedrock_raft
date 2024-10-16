@@ -18,7 +18,7 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
   describe "new/5" do
     test "creates a new candidate and requests votes", %{log: log} do
       nodes = [:b, :c]
-      expect(MockInterface, :timer, fn :election, 150, 300 -> fn -> :ok end end)
+      expect(MockInterface, :timer, fn :election -> fn -> :ok end end)
       expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
 
       candidate = Candidate.new(1, 1, nodes, log, MockInterface)
@@ -38,7 +38,7 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
     setup %{log: log} do
       expect(MockInterface, :send_event, fn :b, {:request_vote, 1, {0, 0}} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:request_vote, 1, {0, 0}} -> :ok end)
-      expect(MockInterface, :timer, fn :election, 150, 300 -> fn -> :ok end end)
+      expect(MockInterface, :timer, fn :election -> fn -> :ok end end)
       candidate = Candidate.new(1, 2, [:b, :c], log, MockInterface)
       {:ok, candidate: candidate}
     end
@@ -61,7 +61,7 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
   describe "append_entries_received/6" do
     setup %{log: log} do
       expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
-      expect(MockInterface, :timer, fn :election, 150, 300 -> &mock_cancel/0 end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
 
       candidate = Candidate.new(1, 1, [:b, :c], log, MockInterface)
       {:ok, candidate: candidate}
@@ -79,35 +79,6 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
         Candidate.append_entries_received(candidate, 0, {0, 0}, [], {0, 0}, :b)
 
       assert updated_candidate == candidate
-    end
-  end
-
-  describe "cancel_timer/1" do
-    test "cancels the timer when it exists", %{log: log} do
-      expect(MockInterface, :send_event, fn :b, {:request_vote, 1, {0, 0}} -> :ok end)
-      expect(MockInterface, :send_event, fn :c, {:request_vote, 1, {0, 0}} -> :ok end)
-      expect(MockInterface, :timer, fn :election, 150, 300 -> fn -> :ok end end)
-      candidate = Candidate.new(1, 1, [:b, :c], log, MockInterface)
-
-      updated_candidate =
-        candidate
-        |> Candidate.cancel_timer()
-
-      assert updated_candidate.cancel_timer_fn == nil
-    end
-
-    test "does nothing when timer doesn't exist", %{log: log} do
-      expect(MockInterface, :send_event, fn :b, {:request_vote, 1, {0, 0}} -> :ok end)
-      expect(MockInterface, :send_event, fn :c, {:request_vote, 1, {0, 0}} -> :ok end)
-      expect(MockInterface, :timer, fn :election, 150, 300 -> fn -> :ok end end)
-      candidate = Candidate.new(1, 1, [:b, :c], log, MockInterface)
-
-      updated_candidate =
-        candidate
-        |> Candidate.cancel_timer()
-        |> Candidate.cancel_timer()
-
-      assert updated_candidate == %{candidate | cancel_timer_fn: nil}
     end
   end
 end

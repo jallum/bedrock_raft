@@ -32,12 +32,7 @@ defmodule Bedrock.Raft.Interface do
   Set a timer for a Raft node. It's expected that the protocol will be notified
   when the timer expires.
   """
-  @callback timer(
-              name :: atom(),
-              min_ms :: non_neg_integer(),
-              max_ms :: non_neg_integer()
-            ) ::
-              cancel_timer_fn()
+  @callback timer(:election | :heartbeat) :: cancel_timer_fn()
 
   @doc """
   Send an event to a Raft node.
