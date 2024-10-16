@@ -58,6 +58,19 @@ defmodule Bedrock.Raft.Mode.Leader do
   """
   @behaviour Bedrock.Raft.Mode
 
+  alias Bedrock.Raft
+  alias Bedrock.Raft.Log
+  alias Bedrock.Raft.Mode.Leader.FollowerTracking
+
+  import Bedrock.Raft.Telemetry,
+    only: [
+      track_consensus_reached: 1,
+      track_transaction_added: 2,
+      track_append_entries_ack_received: 3,
+      track_heartbeat: 1,
+      track_append_entries_sent: 5
+    ]
+
   @type t :: %__MODULE__{}
   defstruct ~w[
     nodes
@@ -69,10 +82,6 @@ defmodule Bedrock.Raft.Mode.Leader do
     log
     interface
   ]a
-
-  alias Bedrock.Raft
-  alias Bedrock.Raft.Log
-  alias Bedrock.Raft.Mode.Leader.FollowerTracking
 
   @doc """
   Create a new leader. We'll send notices to all the nodes, and schedule the
@@ -96,7 +105,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       log: log,
       interface: interface
     }
-    |> send_append_entries_to_followers()
+    |> send_append_entries_to_followers(nodes)
     |> set_timer()
   end
 
@@ -139,9 +148,11 @@ defmodule Bedrock.Raft.Mode.Leader do
            Log.append_transactions(t.log, last_txn_id, [
              {new_txn_id, transaction_payload}
            ]) do
+      track_transaction_added(t.term, new_txn_id)
+
       t =
         %{t | log: log}
-        |> send_append_entries_to_followers()
+        |> send_append_entries_to_followers(t.nodes)
 
       {:ok, t, new_txn_id}
     end
@@ -161,6 +172,8 @@ defmodule Bedrock.Raft.Mode.Leader do
           {:ok, t()}
   def append_entries_ack_received(t, term, newest_transaction_id, _from = follower)
       when term == t.term do
+    track_append_entries_ack_received(term, follower, newest_transaction_id)
+
     if newest_transaction_id <= Log.newest_transaction_id(t.log) do
       FollowerTracking.update_newest_transaction_id(
         t.follower_tracking,
@@ -208,17 +221,20 @@ defmodule Bedrock.Raft.Mode.Leader do
   """
   @spec timer_ticked(t()) :: {:ok, t()}
   def timer_ticked(t) do
+    track_heartbeat(t.term)
+
     t
-    |> send_append_entries_to_followers()
+    |> send_append_entries_to_followers(t.nodes)
     |> reset_timer()
     |> then(&{:ok, &1})
   end
 
-  @spec send_append_entries_to_followers(t()) :: t()
-  defp send_append_entries_to_followers(t) do
-    newest_safe_transaction_id = newest_safe_transaction_id(t)
+  @spec send_append_entries_to_followers(t(), nodes :: [Raft.service()]) :: t()
+  defp send_append_entries_to_followers(t, nodes) do
+    newest_safe_transaction_id =
+      FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
 
-    t.nodes
+    nodes
     |> Enum.each(fn follower ->
       prev_transaction_id =
         FollowerTracking.last_sent_transaction_id(t.follower_tracking, follower)
@@ -235,31 +251,32 @@ defmodule Bedrock.Raft.Mode.Leader do
         )
       end
 
-      event =
-        {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
+      track_append_entries_sent(
+        follower,
+        t.term,
+        prev_transaction_id,
+        transactions |> Enum.map(&elem(&1, 0)),
+        newest_safe_transaction_id
+      )
 
-      apply(t.interface, :send_event, [follower, event])
+      apply(t.interface, :send_event, [
+        follower,
+        {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
+      ])
     end)
 
     t
   end
 
-  defp newest_safe_transaction_id(t) do
-    t.follower_tracking
-    |> FollowerTracking.newest_safe_transaction_id(t.quorum)
-    |> case do
-      :unknown -> Log.initial_transaction_id(t.log)
-      transaction_id -> transaction_id
-    end
-  end
-
   defp try_to_reach_consensus(t, transaction_id) do
     if transaction_id > Log.newest_safe_transaction_id(t.log) do
+      track_consensus_reached(transaction_id)
+
       {:ok, log} = Log.commit_up_to(t.log, transaction_id)
       :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
 
       %{t | log: log}
-      |> send_append_entries_to_followers()
+      |> send_append_entries_to_followers(t.nodes)
     else
       t
     end

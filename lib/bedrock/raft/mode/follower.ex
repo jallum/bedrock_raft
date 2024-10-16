@@ -31,6 +31,17 @@ defmodule Bedrock.Raft.Mode.Follower do
   """
   @behaviour Bedrock.Raft.Mode
 
+  alias Bedrock.Raft
+  alias Bedrock.Raft.Log
+
+  import Bedrock.Raft.Telemetry,
+    only: [
+      track_leadership_change: 2,
+      track_consensus_reached: 1,
+      track_vote: 2,
+      track_append_entries_received: 5
+    ]
+
   @type t :: %__MODULE__{}
   defstruct ~w[
       term
@@ -40,9 +51,6 @@ defmodule Bedrock.Raft.Mode.Follower do
       log
       interface
     ]a
-
-  alias Bedrock.Raft
-  alias Bedrock.Raft.Log
 
   @spec new(Raft.election_term(), Log.t(), interface :: module(), leader :: Raft.service()) :: t()
   def new(term, log, interface, leader \\ :undecided)
@@ -154,6 +162,14 @@ defmodule Bedrock.Raft.Mode.Follower do
         from
       )
       when term == t.term and t.leader in [:undecided, from] do
+    track_append_entries_received(
+      term,
+      from,
+      prev_transaction_id,
+      transactions |> Enum.map(&elem(&1, 0)),
+      commit_transaction_id
+    )
+
     t
     |> reset_timer()
     |> note_change_in_leadership_if_necessary(from)
@@ -212,6 +228,7 @@ defmodule Bedrock.Raft.Mode.Follower do
     do: {prev_txn_id, transactions}
 
   defp note_change_in_leadership_if_necessary(t, leader) when t.leader == :undecided do
+    track_leadership_change(leader, t.term)
     apply(t.interface, :leadership_changed, [{leader, t.term}])
     %{t | leader: leader}
   end
@@ -220,6 +237,7 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   defp try_to_reach_consensus(t, transaction_id) do
     if transaction_id > Log.newest_safe_transaction_id(t.log) do
+      track_consensus_reached(transaction_id)
       {:ok, log} = Log.commit_up_to(t.log, transaction_id)
       :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
       %{t | log: log}
@@ -252,6 +270,7 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   @spec vote_for(t(), Raft.service(), Raft.election_term()) :: t()
   defp vote_for(t, candidate, term) do
+    track_vote(candidate, term)
     apply(t.interface, :send_event, [candidate, {:vote, term}])
     %{t | voted_for: candidate, term: term}
   end

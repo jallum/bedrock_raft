@@ -43,12 +43,12 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   acknowledged *at-least* up to this transaction.
   """
   @spec newest_safe_transaction_id(t(), quorum :: non_neg_integer()) ::
-          Raft.transaction_id() | :unknown
+          Raft.transaction_id()
   def newest_safe_transaction_id(t, quorum) do
     t
     |> :ets.select([{{:_, :_, :"$3"}, [], [:"$3"]}])
     |> Enum.sort()
-    |> Enum.at(-quorum, :unknown)
+    |> Enum.at(-quorum)
   end
 
   @spec update_last_sent_transaction_id(t(), Raft.service(), Raft.transaction_id()) :: t()

@@ -45,6 +45,15 @@ defmodule Bedrock.Raft.Mode.Candidate do
   """
   @behaviour Bedrock.Raft.Mode
 
+  alias Bedrock.Raft
+  alias Bedrock.Raft.Log
+
+  import Bedrock.Raft.Telemetry,
+    only: [
+      track_request_votes: 3,
+      track_election_ended: 3
+    ]
+
   @type t :: %__MODULE__{}
   defstruct ~w[
     term
@@ -55,9 +64,6 @@ defmodule Bedrock.Raft.Mode.Candidate do
     interface
     cancel_timer_fn
   ]a
-
-  alias Bedrock.Raft
-  alias Bedrock.Raft.Log
 
   @spec new(
           Raft.election_term(),
@@ -76,7 +82,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
       log: log,
       interface: interface
     }
-    |> request_votes_from_all_nodes()
+    |> request_votes()
     |> set_timer()
   end
 
@@ -158,10 +164,12 @@ defmodule Bedrock.Raft.Mode.Candidate do
 
   @spec timer_ticked(t()) :: {:ok, t()}
   def timer_ticked(t) do
+    track_election_ended(t.term, t.votes, t.quorum)
+
     t
     |> clear_votes()
     |> set_timer()
-    |> request_votes_from_all_nodes()
+    |> request_votes()
     |> then(&{:ok, &1})
   end
 
@@ -179,9 +187,11 @@ defmodule Bedrock.Raft.Mode.Candidate do
 
   defp clear_votes(t), do: %{t | votes: []}
 
-  @spec request_votes_from_all_nodes(t()) :: t()
-  defp request_votes_from_all_nodes(t) do
-    event = {:request_vote, t.term, Log.newest_transaction_id(t.log)}
+  @spec request_votes(t()) :: t()
+  defp request_votes(t) do
+    my_newest_txn_id = Log.newest_transaction_id(t.log)
+    track_request_votes(t.term, t.nodes, my_newest_txn_id)
+    event = {:request_vote, t.term, my_newest_txn_id}
     t.nodes |> Enum.each(&apply(t.interface, :send_event, [&1, event]))
     t
   end

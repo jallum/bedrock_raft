@@ -31,6 +31,14 @@ defmodule Bedrock.Raft do
   alias Bedrock.Raft.Mode.Follower
   alias Bedrock.Raft.Mode.Leader
 
+  import Bedrock.Raft.Telemetry,
+    only: [
+      track_became_follower: 1,
+      track_became_candidate: 1,
+      track_became_leader: 1,
+      track_leadership_change: 2
+    ]
+
   @type t :: %__MODULE__{
           me: service(),
           mode: Follower.t() | Candidate.t() | Leader.t(),
@@ -62,22 +70,20 @@ defmodule Bedrock.Raft do
     # Start with the newest term in the log.
     term = Log.newest_safe_transaction_id(log) |> TransactionID.term()
 
-    # If we're the only node, we can be the leader.
-    mode =
-      if quorum == 0 do
-        Leader.new(term, quorum, nodes, log, interface)
-      else
-        Follower.new(term, log, interface)
-      end
-
     %__MODULE__{
       me: me,
       nodes: nodes,
       quorum: quorum,
-      mode: mode,
       interface: interface
     }
-    |> notify_change_in_leadership(nil)
+    |> then(fn t ->
+      # If we're the only node, we can be the leader.
+      if quorum == 0 do
+        t |> become_leader(term, log)
+      else
+        t |> become_follower(:undecided, term, log)
+      end
+    end)
   end
 
   @doc """
@@ -118,6 +124,7 @@ defmodule Bedrock.Raft do
   def leader(%{mode: %Follower{}} = t), do: t.mode.leader
   def leader(%{mode: %Leader{}} = t), do: t.me
   def leader(%{mode: %Candidate{}}), do: :undecided
+  def leader(%{mode: nil}), do: :undecided
 
   @doc """
   Return the current term of the cluster.
@@ -165,7 +172,7 @@ defmodule Bedrock.Raft do
   def handle_event(%{mode: %mode{}} = t, :election, :timer) when mode in [Follower, Candidate] do
     mode.timer_ticked(t.mode)
     |> case do
-      :become_candidate -> t |> become_candidate(next_term(t))
+      :become_candidate -> t |> become_candidate(next_term(t), log(t))
       {:ok, mode} -> %{t | mode: mode}
     end
   end
@@ -180,7 +187,7 @@ defmodule Bedrock.Raft do
   def handle_event(%{mode: %mode{}} = t, {:request_vote, term, newest_transaction_id}, candidate) do
     mode.vote_requested(t.mode, term, candidate, newest_transaction_id)
     |> case do
-      :become_follower -> t |> become_follower(:undecided, term)
+      :become_follower -> t |> become_follower(:undecided, term, log(t))
       {:ok, mode} -> %{t | mode: mode}
     end
   end
@@ -188,8 +195,8 @@ defmodule Bedrock.Raft do
   def handle_event(%{mode: %mode{}} = t, {:vote, term}, from) do
     mode.vote_received(t.mode, term, from)
     |> case do
-      :become_leader -> t |> become_leader()
-      :become_follower -> t |> become_follower(:undecided, term)
+      :become_leader -> t |> become_leader(term, log(t))
+      :become_follower -> t |> become_follower(:undecided, term, log(t))
       {:ok, mode} -> %{t | mode: mode}
     end
   end
@@ -208,7 +215,7 @@ defmodule Bedrock.Raft do
       from
     )
     |> case do
-      :become_follower -> t |> become_follower(from, term)
+      :become_follower -> t |> become_follower(from, term, log(t))
       {:ok, mode} -> %{t | mode: mode}
     end
   end
@@ -216,7 +223,7 @@ defmodule Bedrock.Raft do
   def handle_event(%{mode: %mode{}} = t, {:append_entries_ack, term, newest_transaction}, from) do
     mode.append_entries_ack_received(t.mode, term, newest_transaction, from)
     |> case do
-      :become_follower -> t |> become_follower(from, term)
+      :become_follower -> t |> become_follower(from, term, log(t))
       {:ok, mode} -> %{t | mode: mode}
     end
   end
@@ -226,21 +233,30 @@ defmodule Bedrock.Raft do
     t
   end
 
-  defp become_candidate(t, term) do
-    Candidate.new(term, t.quorum, t.nodes, log(t), t.interface)
-    |> then(&%{t | mode: &1})
+  defp become_candidate(t, term, log) do
+    Candidate.new(term, t.quorum, t.nodes, log, t.interface)
+    |> then(fn c ->
+      track_became_candidate(c)
+      %{t | mode: c}
+    end)
     |> notify_change_in_leadership(leader(t))
   end
 
-  defp become_follower(t, leader, term) do
-    Follower.new(term, log(t), t.interface, leader)
-    |> then(&%{t | mode: &1})
+  defp become_follower(t, leader, term, log) do
+    Follower.new(term, log, t.interface, leader)
+    |> then(fn f ->
+      track_became_follower(f)
+      %{t | mode: f}
+    end)
     |> notify_change_in_leadership(leader(t))
   end
 
-  defp become_leader(t) do
-    Leader.new(term(t), t.quorum, t.nodes, log(t), t.interface)
-    |> then(&%{t | mode: &1})
+  defp become_leader(t, term, log) do
+    Leader.new(term, t.quorum, t.nodes, log, t.interface)
+    |> then(fn l ->
+      track_became_leader(l)
+      %{t | mode: l}
+    end)
     |> notify_change_in_leadership(leader(t))
   end
 
@@ -256,6 +272,7 @@ defmodule Bedrock.Raft do
 
     if current_leader != old_leader do
       apply(t.interface, :leadership_changed, [current_leader])
+      track_leadership_change(current_leader, term(t))
     end
 
     t
