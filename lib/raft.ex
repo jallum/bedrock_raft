@@ -146,15 +146,17 @@ defmodule Bedrock.Raft do
   """
   @spec add_transaction(t(), transaction_payload :: any()) ::
           {:ok, t(), transaction_id()} | {:error, :not_leader}
-  def add_transaction(%{mode: %mode{} = leader} = t, transaction_payload)
-      when mode in [Leader] do
-    with {:ok, leader, txn_id} <- mode.next_id(leader),
-         {:ok, leader} <- mode.add_transaction(leader, {txn_id, transaction_payload}) do
-      {:ok, %{t | mode: leader}, txn_id}
+  def add_transaction(%{mode: %mode{}} = t, transaction_payload) do
+    mode.add_transaction(t.mode, transaction_payload)
+    |> case do
+      {:ok, %Leader{} = leader, txn_id} ->
+        put_in(t.mode, leader)
+        |> then(&{:ok, &1, txn_id})
+
+      error ->
+        error
     end
   end
-
-  def add_transaction(_t, _transaction), do: {:error, :not_leader}
 
   @doc """
   Handle an event from outside the protocol. Timers, messages, etc. This is
@@ -163,19 +165,19 @@ defmodule Bedrock.Raft do
   @spec handle_event(t(), event :: any(), source :: service() | :timer) :: t()
   def handle_event(%{mode: %mode{}} = t, :election, :timer)
       when mode in [Follower, Candidate] do
-    mode.cancel_timer(t.mode)
-
-    %{t | mode: Candidate.new(next_term(t), t.quorum, t.nodes, log(t), t.interface)}
-    |> notify_change_in_leadership()
+    mode.timer_ticked(t.mode)
+    |> case do
+      :become_candidate -> t |> become_candidate()
+      {:ok, mode} -> %{t | mode: mode}
+    end
   end
 
   def handle_event(%{mode: %mode{}} = t, :heartbeat, :timer)
       when mode in [Leader] do
     mode.timer_ticked(t.mode)
     |> case do
-      :quorum_failed ->
-        %{t | mode: Follower.new(next_term(t), log(t), t.interface)}
-        |> notify_change_in_leadership()
+      :become_follower ->
+        t |> become_follower(:undecided, term(t))
 
       {:ok, %Leader{} = leader} ->
         %{t | mode: leader}
@@ -184,90 +186,50 @@ defmodule Bedrock.Raft do
 
   def handle_event(
         %{mode: %mode{}} = t,
-        {:request_vote, election_term, newest_transaction},
+        {:request_vote, term, newest_transaction_id},
         candidate
-      )
-      when mode in [Follower] do
-    {:ok, %Follower{} = follower} =
-      mode.vote_requested(t.mode, election_term, candidate, newest_transaction)
-
-    %{t | mode: follower}
-  end
-
-  def handle_event(
-        %{mode: %mode{}} = t,
-        {:request_vote, election_term, newest_transaction},
-        candidate
-      )
-      when mode in [Candidate, Leader] and election_term > t.mode.term do
-    mode.cancel_timer(t.mode)
-
-    {:ok, %Follower{} = follower} =
-      Follower.new(election_term, log(t), t.interface)
-      |> Follower.vote_requested(election_term, candidate, newest_transaction)
-
-    %{t | mode: follower}
-  end
-
-  def handle_event(%{mode: %mode{}} = t, {:vote, election_term}, from)
-      when mode in [Candidate] do
-    mode.vote_received(t.mode, election_term, from)
+      ) do
+    mode.vote_requested(t.mode, term, candidate, newest_transaction_id)
     |> case do
-      :i_was_elected_leader ->
-        %{t | mode: Leader.new(term(t), t.quorum, t.nodes, log(t), t.interface)}
-        |> notify_change_in_leadership()
-
-      {:ok, %Candidate{} = candidate} ->
-        %{t | mode: candidate}
+      :become_follower -> t |> become_follower(:undecided, term)
+      {:ok, mode} -> %{t | mode: mode}
     end
   end
 
-  def handle_event(%{mode: %mode{}} = t, {:vote, _election_term}, _from)
-      when mode in [Follower, Leader],
-      # Ignored
-      do: t
+  def handle_event(%{mode: %mode{}} = t, {:vote, term}, from) do
+    mode.vote_received(t.mode, term, from)
+    |> case do
+      :become_leader -> t |> become_leader()
+      :become_follower -> t |> become_follower(:undecided, term)
+      {:ok, mode} -> %{t | mode: mode}
+    end
+  end
 
   def handle_event(
         %{mode: %mode{}} = t,
-        {:append_entries, term, prev_transaction, transactions, commit_transaction},
-        leader
+        {:append_entries, term, prev_transaction_id, transactions, commit_transaction_id},
+        from
       ) do
     mode.append_entries_received(
       t.mode,
       term,
-      prev_transaction,
+      prev_transaction_id,
       transactions,
-      commit_transaction,
-      leader
+      commit_transaction_id,
+      from
     )
     |> case do
-      :new_leader_elected ->
-        {:ok, log} = Log.purge_unsafe_transactions(log(t))
-
-        %{t | mode: Follower.new(term, log, t.interface, leader)}
-        |> notify_change_in_leadership()
-
-      {:ok, %Leader{} = leader} ->
-        %{t | mode: leader}
-
-      {:ok, %Candidate{} = candidate} ->
-        %{t | mode: candidate}
-
-      {:ok, %Follower{} = follower} ->
-        %{t | mode: follower}
+      :become_follower -> t |> become_follower(from, term)
+      {:ok, mode} -> %{t | mode: mode}
     end
   end
 
-  def handle_event(
-        %{mode: %mode{}} = t,
-        {:append_entries_ack, term, newest_transaction},
-        follower
-      )
-      when mode in [Leader] do
-    {:ok, %Leader{} = leader} =
-      mode.append_entries_ack_received(t.mode, term, newest_transaction, follower)
-
-    %{t | mode: leader}
+  def handle_event(%{mode: %mode{}} = t, {:append_entries_ack, term, newest_transaction}, from) do
+    mode.append_entries_ack_received(t.mode, term, newest_transaction, from)
+    |> case do
+      :become_follower -> t |> become_follower(from, term)
+      {:ok, mode} -> %{t | mode: mode}
+    end
   end
 
   def handle_event(t, event, from) do
@@ -275,8 +237,28 @@ defmodule Bedrock.Raft do
     t
   end
 
+  defp become_candidate(t) do
+    Candidate.new(next_term(t), t.quorum, t.nodes, log(t), t.interface)
+    |> then(&%{t | mode: &1})
+    |> notify_change_in_leadership()
+  end
+
+  defp become_follower(t, leader, term) do
+    {:ok, log} = Log.purge_unsafe_transactions(log(t))
+
+    Follower.new(term, log, t.interface, leader)
+    |> then(&%{t | mode: &1})
+    |> notify_change_in_leadership()
+  end
+
+  defp become_leader(t) do
+    Leader.new(term(t), t.quorum, t.nodes, log(t), t.interface)
+    |> then(&%{t | mode: &1})
+    |> notify_change_in_leadership()
+  end
+
   @spec next_term(t()) :: Raft.election_term()
-  defp next_term(t), do: term(t) + 1
+  defp next_term(t), do: 1 + term(t)
 
   @spec determine_majority([service()]) :: non_neg_integer()
   defp determine_majority(nodes), do: 1 + (nodes |> length() |> div(2))

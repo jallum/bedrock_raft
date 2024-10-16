@@ -80,61 +80,100 @@ defmodule Bedrock.Raft.Mode.Candidate do
     |> set_timer()
   end
 
+  @impl true
+  @spec vote_requested(
+          t(),
+          Raft.election_term(),
+          candidate :: Raft.service(),
+          candidate_last_transaction :: Raft.transaction()
+        ) :: {:ok, t()} | :become_follower
+  def vote_requested(t, term, _, _) when term > t.term, do: :become_follower
+  def vote_requested(t, _, _, _), do: {:ok, t}
+
   @doc """
-  A vote has been received. If the voting term is equal to our term, then
-  we'll record the vote, if we haven't received one from this follower yet.
-  If the voting term is different from our term, then we'll ignore the vote.
-  If we've received enough votes to win the election for this term, then
-  we'll return an indication that we've been elected leader.
+  A vote has been received. If the voting term is equal to our term, and we
+  haven't yet seen a vote from that follower, we record it and then check to
+  see if we've received enough votes to win the election.
+
+  If the voting term is larger than our term, then we'll become a follower.
+
+  Otherwise, we just ignore the vote.
   """
+  @impl true
   @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
-          :i_was_elected_leader | {:ok, t()}
-  def vote_received(t, voting_term, follower) when voting_term == t.term do
-    if follower in t.votes do
-      {:ok, t}
-    else
-      votes = [follower | t.votes]
+          :become_leader | :become_follower | {:ok, t()}
+  def vote_received(t, term, follower) when term == t.term,
+    do: t |> add_to_votes(follower) |> become_leader_with_quorum()
 
-      if length(votes) >= t.quorum do
-        t |> cancel_timer()
-        :i_was_elected_leader
-      else
-        {:ok, %{t | votes: votes}}
-      end
-    end
-  end
+  def vote_received(t, term, _) when term > t.term, do: t |> become_follower()
+  def vote_received(t, _, _), do: {:ok, t}
 
-  def vote_received(t, _voting_term, _follower), do: {:ok, t}
+  @spec add_to_votes(t(), follower :: Raft.service()) :: t()
+  def add_to_votes(t, follower),
+    do: if(follower in t.votes, do: t, else: %{t | votes: [follower | t.votes]})
+
+  def become_leader_with_quorum(t) when length(t.votes) >= t.quorum, do: become_leader(t)
+  def become_leader_with_quorum(t), do: {:ok, t}
+
+  @doc """
+  Since we are not the leader, we cannot add transactions.
+  """
+  @impl true
+  @spec add_transaction(t(), transaction_payload :: term()) :: {:error, :not_leader}
+  def add_transaction(_, _), do: {:error, :not_leader}
+
+  @doc """
+  An append entries ack has been received. If the term is greater than or equal
+  to our term, then we will cancel any outstanding timers and signal that a new
+  leader has been elected. Otherwise, we'll ignore the it.
+  """
+  @impl true
+  @spec append_entries_ack_received(
+          any(),
+          Raft.election_term(),
+          newest_transaction_id :: Raft.transaction_id(),
+          follower :: Raft.service()
+        ) :: {:ok, any()} | :become_follower
+  def append_entries_ack_received(t, term, _, _) when term > t.term, do: become_follower(t)
+  def append_entries_ack_received(t, _, _, _), do: {:ok, t}
 
   @doc """
   A ping has been received. If the term is greater than or equal to our term,
   then we will cancel any outstanding timers and signal that a new leader has
-  been elected. Otherwise, we'll ignore the ping.
+  been elected. Otherwise, we'll ignore the it.
   """
   @impl true
   @spec append_entries_received(
           t(),
-          leader_term :: Raft.election_term(),
-          prev_transaction :: Raft.transaction_id(),
+          term :: Raft.election_term(),
+          prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
-          commit_transaction :: Raft.transaction_id(),
+          commit_transaction_id :: Raft.transaction_id(),
           from :: Raft.service()
         ) ::
-          {:ok, t()} | :new_leader_elected
-  def append_entries_received(
-        t,
-        leader_term,
-        _prev_transaction,
-        _transactions,
-        _commit_transaction,
-        _leader
-      ) do
-    if leader_term >= t.term do
-      t |> cancel_timer()
-      :new_leader_elected
-    else
-      {:ok, t}
-    end
+          {:ok, t()} | :become_follower
+  def append_entries_received(t, term, _, _, _, _) when term > t.term, do: become_follower(t)
+  def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
+
+  @spec timer_ticked(t()) :: {:ok, t()}
+  def timer_ticked(t) do
+    t
+    |> clear_votes()
+    |> set_timer()
+    |> request_votes_from_all_nodes()
+    |> then(&{:ok, &1})
+  end
+
+  @spec become_follower(t()) :: :become_follower
+  def become_follower(t) do
+    t |> cancel_timer()
+    :become_follower
+  end
+
+  @spec become_leader(t()) :: :become_leader
+  def become_leader(t) do
+    t |> cancel_timer()
+    :become_leader
   end
 
   @spec set_timer(t()) :: t()
@@ -149,15 +188,12 @@ defmodule Bedrock.Raft.Mode.Candidate do
     %{t | cancel_timer_fn: nil}
   end
 
+  defp clear_votes(t), do: %{t | votes: []}
+
   @spec request_votes_from_all_nodes(t()) :: t()
   defp request_votes_from_all_nodes(t) do
-    newest_transaction_id = Log.newest_transaction_id(t.log)
-
-    t.nodes
-    |> Enum.each(
-      &apply(t.interface, :send_event, [&1, {:request_vote, t.term, newest_transaction_id}])
-    )
-
+    event = {:request_vote, t.term, Log.newest_transaction_id(t.log)}
+    t.nodes |> Enum.each(&apply(t.interface, :send_event, [&1, event]))
     t
   end
 end

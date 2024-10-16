@@ -64,6 +64,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     quorum
     term
     pongs
+    missed_pongs
     id_sequence
     newest_transaction_id
     last_consensus_transaction_id
@@ -75,7 +76,6 @@ defmodule Bedrock.Raft.Mode.Leader do
 
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
-  alias Bedrock.Raft.TransactionID
   alias Bedrock.Raft.Mode.Leader.FollowerTracking
 
   @doc """
@@ -97,13 +97,13 @@ defmodule Bedrock.Raft.Mode.Leader do
       term: term,
       id_sequence: 0,
       pongs: [],
+      missed_pongs: 0,
       newest_transaction_id: Log.newest_transaction_id(log),
       last_consensus_transaction_id: Log.newest_safe_transaction_id(log),
       follower_tracking: FollowerTracking.new(nodes),
       log: log,
       interface: interface
     }
-    |> reset_pongs()
     |> send_append_entries_to_followers()
     |> set_timer()
   end
@@ -115,30 +115,42 @@ defmodule Bedrock.Raft.Mode.Leader do
     {:ok, %{t | id_sequence: next_id}, id}
   end
 
+  @impl true
+  @spec vote_requested(
+          t(),
+          Raft.election_term(),
+          candidate :: Raft.service(),
+          candidate_last_transaction :: Raft.transaction()
+        ) :: {:ok, t()} | :become_follower
+  def vote_requested(t, term, _, _) when term > t.term, do: :become_follower
+  def vote_requested(t, _, _, _), do: {:ok, t}
+
+  @doc """
+  """
+  @impl true
+  @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
+          :become_follower | {:ok, t()}
+  def vote_received(t, term, _) when term > t.term, do: become_follower(t)
+  def vote_received(t, _, _), do: {:ok, t}
+
   @doc """
   Add a transaction to the log. If the transaction is out of order (the
   transaction is not from this term, or is smaller than the newest transaction),
   we'll return an error.
   """
   @impl true
-  @spec add_transaction(t(), Raft.transaction()) ::
-          {:ok, t()} | {:error, :out_of_order | :incorrect_term}
-  def add_transaction(t, {transaction_id, _data} = transaction) do
-    cond do
-      transaction_id < t.newest_transaction_id ->
-        {:error, :out_of_order}
+  @spec add_transaction(t(), transaction_payload :: term()) :: {:ok, t(), Raft.transaction_id()}
+  def add_transaction(t, transaction_payload) do
+    with {:ok, t, new_txn_id} <- next_id(t),
+         {:ok, log} <-
+           Log.append_transactions(t.log, t.newest_transaction_id, [
+             {new_txn_id, transaction_payload}
+           ]) do
+      t =
+        %{t | log: log, newest_transaction_id: new_txn_id}
+        |> send_append_entries_to_followers()
 
-      TransactionID.term(transaction_id) != t.term ->
-        {:error, :incorrect_term}
-
-      true ->
-        {:ok, log} = Log.append_transactions(t.log, t.newest_transaction_id, [transaction])
-
-        t =
-          %{t | log: log, newest_transaction_id: transaction_id}
-          |> send_append_entries_to_followers()
-
-        {:ok, t}
+      {:ok, t, new_txn_id}
     end
   end
 
@@ -163,9 +175,7 @@ defmodule Bedrock.Raft.Mode.Leader do
         %{t | pongs: [follower | t.pongs]}
       end
 
-    if newest_transaction_id <= Log.newest_transaction_id(t.log) and
-         newest_transaction_id >
-           FollowerTracking.newest_transaction_id(t.follower_tracking, follower) do
+    if newest_transaction_id <= Log.newest_transaction_id(t.log) do
       FollowerTracking.update_newest_transaction_id(
         t.follower_tracking,
         follower,
@@ -173,7 +183,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       )
     end
 
-    FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum - 1)
+    FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
     |> case do
       :unknown ->
         {:ok, t}
@@ -187,10 +197,13 @@ defmodule Bedrock.Raft.Mode.Leader do
     end
   end
 
+  def append_entries_ack_received(t, term, _, _) when term > t.term, do: become_follower(t)
+  def append_entries_ack_received(t, _, _, _), do: {:ok, t}
+
   @doc """
-  A ping has been received. If the term is greater than our term, then we will
-  cancel any outstanding timers and signal that a new leader has been elected.
-  Otherwise, we'll ignore the ping.
+  A ping that is normally directed at a follower has been received. If the term
+  is greater than our term, then we will cancel any outstanding timers and
+  signal that a new leader has been elected. Otherwise, we'll ignore the ping.
   """
   @impl true
   @spec append_entries_received(
@@ -198,34 +211,32 @@ defmodule Bedrock.Raft.Mode.Leader do
           leader_term :: Raft.election_term(),
           prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
-          commit_transaction :: Raft.transaction_id(),
+          commit_transaction_id :: Raft.transaction_id(),
           from :: Raft.service()
         ) ::
-          {:ok, t()} | :new_leader_elected
-  def append_entries_received(
-        t,
-        leader_term,
-        _prev_transaction,
-        _transactions,
-        _commit_transaction,
-        _new_leader
-      ) do
-    if leader_term > t.term do
-      t |> cancel_timer()
-      :new_leader_elected
-    else
-      {:ok, t}
-    end
-  end
+          {:ok, t()} | :become_follower
+  def append_entries_received(t, term, _, _, _, _) when term > t.term, do: t |> become_follower()
+  def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
 
   @doc """
   The timer has ticked. We'll send notices to all the nodes, and start the
-  timer again. If we haven't received enough pongs, we'll signal that we've
-  failed to reach quorum.
+  timer again.
   """
-  @spec timer_ticked(t()) :: {:ok, t()} | :quorum_failed
-  def timer_ticked(t) when length(t.pongs) < t.quorum,
-    do: :quorum_failed
+  @spec timer_ticked(t()) :: {:ok, t()} | :become_follower
+  def timer_ticked(t) when length(t.pongs) < t.quorum do
+    update_in(t.missed_pongs, &(1 + &1))
+    |> case do
+      %{missed_pongs: 5} ->
+        become_follower(t)
+
+      t ->
+        t
+        |> send_append_entries_to_followers()
+        |> cancel_timer()
+        |> set_timer()
+        |> then(&{:ok, &1})
+    end
+  end
 
   def timer_ticked(t) do
     t
@@ -237,7 +248,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   end
 
   @spec send_append_entries_to_followers(t()) :: t()
-  def send_append_entries_to_followers(t) do
+  defp send_append_entries_to_followers(t) do
     newest_safe_transaction_id = newest_safe_transaction_id(t)
 
     t.nodes
@@ -261,10 +272,10 @@ defmodule Bedrock.Raft.Mode.Leader do
         )
       end
 
-      apply(t.interface, :send_event, [
-        follower,
+      event =
         {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
-      ])
+
+      apply(t.interface, :send_event, [follower, event])
     end)
 
     t
@@ -277,6 +288,11 @@ defmodule Bedrock.Raft.Mode.Leader do
       :unknown -> Log.initial_transaction_id(t.log)
       transaction_id -> transaction_id
     end
+  end
+
+  defp become_follower(t) do
+    t |> cancel_timer()
+    :become_follower
   end
 
   @spec cancel_timer(t()) :: t()
@@ -294,7 +310,7 @@ defmodule Bedrock.Raft.Mode.Leader do
 
   @spec reset_pongs(t()) :: t()
   def reset_pongs(t),
-    do: %{t | pongs: []}
+    do: %{t | pongs: [], missed_pongs: 0}
 
   defp notify_if_consensus_reached(t, transaction_id)
        when t.last_consensus_transaction_id >= transaction_id,

@@ -70,7 +70,7 @@ defmodule Bedrock.Raft.Mode.Follower do
       interface: interface
     }
     |> set_timer()
-    |> send_append_entries_reply()
+    |> send_append_entries_ack()
   end
 
   @doc """
@@ -81,65 +81,94 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   Otherwise, we'll ignore the request.
   """
+  @impl true
   @spec vote_requested(
           t(),
           Raft.election_term(),
           candidate :: Raft.service(),
           candidate_last_transaction :: Raft.transaction()
         ) :: {:ok, t()}
-  def vote_requested(t, election_term, candidate, candidate_newest_transaction_id) do
-    if (election_term == t.term and is_nil(t.voted_for)) or
-         (election_term > t.term and
-            candidate_newest_transaction_id >= Log.newest_transaction_id(t.log)) do
+  def vote_requested(t, term, candidate, candidate_newest_transaction_id) do
+    if (term == t.term and is_nil(t.voted_for)) or
+         (term > t.term and candidate_newest_transaction_id >= Log.newest_transaction_id(t.log)) do
       {:ok,
        t
        |> reset_timer()
-       |> vote_for(candidate, election_term)}
+       |> vote_for(candidate, term)}
     else
       {:ok, t}
     end
   end
 
   @doc """
+  """
+  @impl true
+  @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
+          :become_follower | {:ok, t()}
+  def vote_received(t, term, _) when term > t.term, do: become_follower(t)
+  def vote_received(t, _, _), do: {:ok, t}
+
+  @doc """
+  As a follower, we cannot add transactions. So we don't.
+  """
+  @impl true
+  @spec add_transaction(t(), transaction_payload :: term()) :: {:error, :not_leader}
+  def add_transaction(_t, _transaction_payload), do: {:error, :not_leader}
+
+  @doc """
+  As a follower, we don't need to do anything when we receive an append entries
+  acknowledgement. If the term is greater than our term, then we will cancel
+  any outstanding timers and record that a new leader has been elected.
+  Otherwise, we'll ignore it.
+  """
+  @impl true
+  @spec append_entries_ack_received(
+          t(),
+          Raft.election_term(),
+          newest_transaction_id :: Raft.transaction_id(),
+          follower :: Raft.service()
+        ) :: {:ok, t()} | :become_follower
+  def append_entries_ack_received(t, term, _, _) when term > t.term, do: t |> become_follower()
+  def append_entries_ack_received(t, _, _, _), do: {:ok, t}
+
+  @doc """
   A ping has been received. If the term is greater than our term, then we will
   cancel any outstanding timers and record that a new leader has been elected.
-  Otherwise, we'll ignore the ping.
+  Otherwise, we'll ignore it.
   """
   @impl true
   @spec append_entries_received(
           t(),
-          leader_term :: Raft.election_term(),
+          term :: Raft.election_term(),
           prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
           commit_transaction_id :: Raft.transaction_id(),
           from :: Raft.service()
         ) ::
-          {:ok, t()} | :new_leader_elected
+          {:ok, t()} | :become_follower
   def append_entries_received(
         t,
-        leader_term,
+        term,
         prev_transaction_id,
         transactions,
         commit_transaction_id,
-        leader
-      ) do
-    cond do
-      leader_term < t.term ->
-        {:ok, t}
-
-      leader_term != t.term || leader != t.leader ->
-        t |> cancel_timer()
-        :new_leader_elected
-
-      true ->
-        t
-        |> reset_timer()
-        |> try_to_append_transactions(prev_transaction_id, transactions)
-        |> try_commit_up_to(commit_transaction_id)
-        |> send_append_entries_reply()
-        |> then(&{:ok, &1})
-    end
+        from
+      )
+      when term == t.term and t.leader in [:undecided, from] do
+    t
+    |> reset_timer()
+    |> note_change_in_leadership_if_necessary(from)
+    |> try_to_append_transactions(prev_transaction_id, transactions)
+    |> try_commit_up_to(commit_transaction_id)
+    |> send_append_entries_ack()
+    |> then(&{:ok, &1})
   end
+
+  def append_entries_received(t, term, _, _, _, _) when term > t.term, do: t |> become_follower()
+  def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
+
+  @spec timer_ticked(t()) :: :become_candidate
+  def timer_ticked(t), do: t |> become_candidate()
 
   def try_to_append_transactions(t, _prev_transaction, []), do: t
 
@@ -188,15 +217,29 @@ defmodule Bedrock.Raft.Mode.Follower do
     |> notify_if_consensus_reached(consensus_transaction_id)
   end
 
-  @spec send_append_entries_reply(t()) :: t()
-  defp send_append_entries_reply(t) do
-    newest_transaction_id = Log.newest_transaction_id(t.log)
+  defp note_change_in_leadership_if_necessary(t, leader) when t.leader == :undecided do
+    apply(t.interface, :leadership_changed, [{leader, t.term}])
+    %{t | leader: leader}
+  end
 
-    :ok =
-      apply(t.interface, :send_event, [
-        t.leader,
-        {:append_entries_ack, t.term, newest_transaction_id}
-      ])
+  defp note_change_in_leadership_if_necessary(t, _), do: t
+
+  defp become_follower(t) do
+    t |> cancel_timer()
+    :become_follower
+  end
+
+  defp become_candidate(t) do
+    t |> cancel_timer()
+    :become_candidate
+  end
+
+  @spec send_append_entries_ack(t()) :: t()
+  defp send_append_entries_ack(t) do
+    apply(t.interface, :send_event, [
+      t.leader,
+      {:append_entries_ack, t.term, Log.newest_transaction_id(t.log)}
+    ])
 
     t
   end
@@ -226,7 +269,6 @@ defmodule Bedrock.Raft.Mode.Follower do
   defp notify_if_consensus_reached(t, transaction_id)
        when t.last_consensus_transaction_id < transaction_id do
     :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
-
     %{t | last_consensus_transaction_id: transaction_id}
   end
 

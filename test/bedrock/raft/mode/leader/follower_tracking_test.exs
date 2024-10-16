@@ -44,7 +44,8 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTrackingTest do
     assert :ets.lookup(table, :f1) == [{:f1, 1, :unknown}]
   end
 
-  test "update_newest_transaction_id/3 updates the newest transaction id", %{table: table} do
+  test "update_newest_transaction_id/3 updates the newest transaction id and the last sent transaction id",
+       %{table: table} do
     FollowerTracking.update_newest_transaction_id(table, :f1, 2)
     assert :ets.lookup(table, :f1) == [{:f1, 2, 2}]
   end

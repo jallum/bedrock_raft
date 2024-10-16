@@ -48,14 +48,13 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
       assert updated_candidate.votes == [:b]
     end
 
-    test "ignores vote when term doesn't match", %{candidate: candidate} do
-      {:ok, updated_candidate} = Candidate.vote_received(candidate, 2, :b)
-      assert updated_candidate.votes == []
+    test "becomes a follower when the voting term is higher", %{candidate: candidate} do
+      :become_follower = Candidate.vote_received(candidate, 2, :b)
     end
 
-    test "returns :was_elected_leader when quorum is reached", %{candidate: candidate} do
+    test "returns :become_leader when quorum is reached", %{candidate: candidate} do
       {:ok, candidate_with_vote} = Candidate.vote_received(candidate, 1, :b)
-      assert :i_was_elected_leader = Candidate.vote_received(candidate_with_vote, 1, :c)
+      assert :become_leader = Candidate.vote_received(candidate_with_vote, 1, :c)
     end
   end
 
@@ -68,8 +67,8 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
       {:ok, candidate: candidate}
     end
 
-    test "returns :new_leader_elected when leader's term is greater", %{candidate: candidate} do
-      :new_leader_elected =
+    test "returns :become_follower when leader's term is greater", %{candidate: candidate} do
+      :become_follower =
         Candidate.append_entries_received(candidate, 2, {0, 0}, [], {0, 0}, :b)
     end
 

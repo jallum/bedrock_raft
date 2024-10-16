@@ -79,18 +79,18 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface)
 
-      prev_transaction = {0, 0}
+      prev_transaction_id = {0, 0}
       transactions = [{{2, 1}, "another_tx"}]
-      commit_transaction = {2, 1}
+      commit_transaction_id = {2, 1}
       leader = :node_1
 
-      assert :new_leader_elected =
+      assert :become_follower =
                Follower.append_entries_received(
                  follower,
                  2,
-                 prev_transaction,
+                 prev_transaction_id,
                  transactions,
-                 commit_transaction,
+                 commit_transaction_id,
                  leader
                )
     end
@@ -102,18 +102,18 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       expect(MockInterface, :timer, fn _, _, _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface)
 
-      prev_transaction = :some_tx_id
+      prev_transaction_id = :some_tx_id
       transactions = []
-      commit_transaction = :another_tx_id
+      commit_transaction_id = :another_tx_id
       leader = :node_1
 
       {:ok, follower} =
         Follower.append_entries_received(
           follower,
           1,
-          prev_transaction,
+          prev_transaction_id,
           transactions,
-          commit_transaction,
+          commit_transaction_id,
           leader
         )
 
