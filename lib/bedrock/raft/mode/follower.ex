@@ -83,7 +83,7 @@ defmodule Bedrock.Raft.Mode.Follower do
           t(),
           Raft.election_term(),
           candidate :: Raft.service(),
-          candidate_last_transaction :: Raft.transaction()
+          candidate_last_transaction_id :: Raft.transaction_id()
         ) :: {:ok, t()}
   def vote_requested(t, term, candidate, candidate_newest_transaction_id) do
     if (term == t.term and is_nil(t.voted_for)) or

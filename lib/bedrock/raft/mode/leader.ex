@@ -116,7 +116,7 @@ defmodule Bedrock.Raft.Mode.Leader do
           t(),
           Raft.election_term(),
           candidate :: Raft.service(),
-          candidate_last_transaction :: Raft.transaction()
+          candidate_last_transaction_id :: Raft.transaction_id()
         ) :: {:ok, t()} | :become_follower
   def vote_requested(t, term, _, _) when term > t.term, do: :become_follower
   def vote_requested(t, _, _, _), do: {:ok, t}

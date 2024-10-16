@@ -9,7 +9,7 @@ defmodule Bedrock.Raft.Mode do
               any(),
               Raft.election_term(),
               candidate :: Raft.service(),
-              candidate_last_transaction :: Raft.transaction()
+              candidate_last_transaction_id :: Raft.transaction_id()
             ) :: {:ok, any()} | :become_follower
 
   @callback vote_received(any(), Raft.election_term(), follower :: Raft.service()) ::
