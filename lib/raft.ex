@@ -244,9 +244,7 @@ defmodule Bedrock.Raft do
   end
 
   defp become_follower(t, leader, term) do
-    {:ok, log} = Log.purge_unsafe_transactions(log(t))
-
-    Follower.new(term, log, t.interface, leader)
+    Follower.new(term, log(t), t.interface, leader)
     |> then(&%{t | mode: &1})
     |> notify_change_in_leadership()
   end

@@ -36,7 +36,6 @@ defmodule Bedrock.Raft.Mode.Follower do
       term
       leader
       voted_for
-      last_consensus_transaction_id
       cancel_timer_fn
       log
       interface
@@ -52,7 +51,6 @@ defmodule Bedrock.Raft.Mode.Follower do
     %__MODULE__{
       term: term,
       voted_for: nil,
-      last_consensus_transaction_id: Log.newest_safe_transaction_id(log),
       leader: :undecided,
       log: log,
       interface: interface
@@ -64,7 +62,6 @@ defmodule Bedrock.Raft.Mode.Follower do
     %__MODULE__{
       term: term,
       voted_for: leader,
-      last_consensus_transaction_id: Log.newest_safe_transaction_id(log),
       leader: leader,
       log: log,
       interface: interface
@@ -266,11 +263,13 @@ defmodule Bedrock.Raft.Mode.Follower do
   defp set_timer(t),
     do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election, 150, 300])}
 
-  defp notify_if_consensus_reached(t, transaction_id)
-       when t.last_consensus_transaction_id < transaction_id do
-    :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
-    %{t | last_consensus_transaction_id: transaction_id}
+  defp notify_if_consensus_reached(t, transaction_id) do
+    if transaction_id >= Log.newest_safe_transaction_id(t.log) do
+      {:ok, log} = Log.commit_up_to(t.log, transaction_id)
+      :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
+      %{t | log: log}
+    else
+      t
+    end
   end
-
-  defp notify_if_consensus_reached(t, _transaction_id), do: t
 end
