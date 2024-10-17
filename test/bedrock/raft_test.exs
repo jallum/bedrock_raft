@@ -11,9 +11,15 @@ defmodule Bedrock.RaftTest do
 
   import Mox
   alias Bedrock.Raft.MockInterface
-  setup :verify_on_exit!
+
+  setup [:verify_on_exit!, :fix_stubs]
 
   def mock_timer_cancel, do: :ok
+
+  def fix_stubs(context) do
+    stub(MockInterface, :heartbeat_ms, fn -> 0 end)
+    {:ok, context}
+  end
 
   describe "Raft can be constructed" do
     test "when creating an instance with no other nodes, we start out as a leader" do
@@ -434,6 +440,8 @@ defmodule Bedrock.RaftTest do
         |> Raft.handle_event({:append_entries_ack, 1, t0}, :b)
         |> Raft.handle_event(:heartbeat, :timer)
 
+      verify!()
+
       assert {:a, 1} = Raft.leadership(p)
 
       # Packets were dropped, :a became separated, an election was held and a
@@ -446,6 +454,7 @@ defmodule Bedrock.RaftTest do
 
       p = p |> Raft.handle_event({:append_entries, 2, t1, [{t1, :data1}], t1}, :c)
 
+      verify!()
       assert {:c, 2} = Raft.leadership(p)
     end
 
@@ -477,8 +486,7 @@ defmodule Bedrock.RaftTest do
         |> Raft.handle_event({:append_entries_ack, 1, t0}, :b)
         |> Raft.handle_event(:heartbeat, :timer)
 
-      assert :ok = verify!()
-
+      verify!()
       assert {:a, 1} = Raft.leadership(p)
 
       # Packets were dropped, :a became separated, an election was held and a
@@ -494,6 +502,8 @@ defmodule Bedrock.RaftTest do
       {:ok, p, t2} = Raft.next_transaction_id(p)
       p = p |> Raft.handle_event({:append_entries, 2, t1, [{t2, :data1}], t1}, :c)
 
+      verify!()
+
       # When :c sends the missing transactions, we add them to our log and note
       # that fact by sending an ack. We reset our heartbeat timer. Since
       # we've received all the transactions up to t1, we can now signal
@@ -503,6 +513,8 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :consensus_reached, fn _, ^t1 -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t2} -> :ok end)
       p = p |> Raft.handle_event({:append_entries, 2, t0, [{t0, :data1}, {t2, :data1}], t1}, :c)
+
+      verify!()
 
       # When :c receives the ack, it will send us a new append entries message
       # (that in this case, does not contain any new transactions) that tells
@@ -514,6 +526,7 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t2} -> :ok end)
       p = p |> Raft.handle_event({:append_entries, 2, t2, [], t2}, :c)
 
+      verify!()
       assert {:c, 2} = Raft.leadership(p)
     end
   end
@@ -543,6 +556,8 @@ defmodule Bedrock.RaftTest do
         |> Raft.handle_event({:append_entries_ack, 1, t0}, :c)
         |> Raft.handle_event({:append_entries_ack, 1, t0}, :b)
 
+      verify!()
+
       assert %Raft{
                me: :a,
                mode: %Leader{
@@ -554,7 +569,6 @@ defmodule Bedrock.RaftTest do
                quorum: 1
              } = p
 
-      verify!()
       assert {:a, 1} = Raft.leadership(p)
 
       # some time goes by, and we don't hear back from either :b or :c...

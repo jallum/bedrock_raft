@@ -41,7 +41,7 @@ defmodule Bedrock.Raft do
 
   @type t :: %__MODULE__{
           me: service(),
-          mode: Follower.t() | Candidate.t() | Leader.t(),
+          mode: Follower.t() | Candidate.t() | Leader.t() | nil,
           nodes: [service()],
           quorum: pos_integer(),
           interface: module()

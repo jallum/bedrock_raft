@@ -18,6 +18,8 @@ defmodule Bedrock.Raft.Interface do
 
   @type cancel_timer_fn :: (-> :ok)
 
+  @callback heartbeat_ms() :: non_neg_integer()
+
   @doc """
   An unhandled event has occurred.
   """

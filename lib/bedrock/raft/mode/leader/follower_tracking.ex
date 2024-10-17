@@ -6,34 +6,71 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   transaction id that a quorum of followers has acknowledged. This information
   is used to determine the commit index.
   """
-
-  @type t :: :ets.table()
-
   alias Bedrock.Raft
 
-  @spec new(followers :: [Raft.service()], initial_transaction_id :: Raft.transaction_id()) :: t()
-  def new(followers, initial_transaction_id) do
-    t = :ets.new(:follower_tracking, [:set])
-    :ets.insert(t, followers |> Enum.map(&{&1, initial_transaction_id, initial_transaction_id}))
+  @type timestamp_fn() :: (-> integer())
+  @type t :: %__MODULE__{
+          table: :ets.table(),
+          timestamp_fn: timestamp_fn()
+        }
+
+  defstruct table: nil,
+            timestamp_fn: nil
+
+  defp default_timestamp_impl, do: :os.system_time(:millisecond)
+
+  @spec new(
+          followers :: [Raft.service()],
+          opts :: [
+            initial_transaction_id: Raft.transaction_id(),
+            timestamp_fn: timestamp_fn()
+          ]
+        ) :: t()
+  def new(followers, opts) do
+    t = %__MODULE__{
+      table: :ets.new(:follower_tracking, [:ordered_set]),
+      timestamp_fn: opts[:timestamp_fn] || (&default_timestamp_impl/0)
+    }
+
+    initial_transaction_id = opts[:initial_transaction_id] || :unknown
+    now = timestamp(t)
+
+    :ets.insert(
+      t.table,
+      followers |> Enum.map(&{&1, initial_transaction_id, initial_transaction_id, now})
+    )
+
     t
   end
 
+  @spec timestamp(t()) :: integer()
+  def timestamp(%{timestamp_fn: timestamp_fn}), do: timestamp_fn.()
+
   @spec last_sent_transaction_id(t(), Raft.service()) :: Raft.transaction_id()
   def last_sent_transaction_id(t, follower) do
-    :ets.lookup(t, follower)
+    t.table
+    |> :ets.lookup(follower)
     |> case do
-      [{^follower, last_sent_transaction_id, _newest_transaction_id}] -> last_sent_transaction_id
+      [{^follower, last_sent_transaction_id, _, _}] -> last_sent_transaction_id
       [] -> raise "follower not found: #{inspect(follower)}"
     end
   end
 
   @spec newest_transaction_id(t(), Raft.service()) :: Raft.transaction_id()
   def newest_transaction_id(t, follower) do
-    :ets.lookup(t, follower)
+    t.table
+    |> :ets.lookup(follower)
     |> case do
-      [{^follower, _last_sent_transaction_id, newest_transaction_id}] -> newest_transaction_id
+      [{^follower, _, newest_transaction_id, _}] -> newest_transaction_id
       [] -> raise "follower not found: #{inspect(follower)}"
     end
+  end
+
+  def followers_not_seen_in(t, n_milliseconds) do
+    since = timestamp(t) - n_milliseconds
+
+    t.table
+    |> :ets.select([{{:"$1", :_, :_, :"$4"}, [{:>=, since, :"$4"}], [:"$1"]}])
   end
 
   @doc """
@@ -45,21 +82,22 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   @spec newest_safe_transaction_id(t(), quorum :: non_neg_integer()) ::
           Raft.transaction_id()
   def newest_safe_transaction_id(t, quorum) do
-    t
-    |> :ets.select([{{:_, :_, :"$3"}, [], [:"$3"]}])
+    t.table
+    |> :ets.select([{{:_, :_, :"$3", :_}, [], [:"$3"]}])
     |> Enum.sort()
     |> Enum.at(-quorum)
   end
 
   @spec update_last_sent_transaction_id(t(), Raft.service(), Raft.transaction_id()) :: t()
   def update_last_sent_transaction_id(t, follower, last_transaction_id_sent) do
-    :ets.update_element(t, follower, {2, last_transaction_id_sent})
+    t.table |> :ets.update_element(follower, {2, last_transaction_id_sent})
     t
   end
 
   @spec update_newest_transaction_id(t(), Raft.service(), Raft.transaction_id()) :: t()
   def update_newest_transaction_id(t, follower, newest_transaction_id) do
-    :ets.update_element(t, follower, [{2, newest_transaction_id}, {3, newest_transaction_id}])
+    now = timestamp(t)
+    t.table |> :ets.insert({follower, newest_transaction_id, newest_transaction_id, now})
     t
   end
 end

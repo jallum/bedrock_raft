@@ -101,7 +101,10 @@ defmodule Bedrock.Raft.Mode.Leader do
       nodes: nodes,
       term: term,
       id_sequence: 0,
-      follower_tracking: FollowerTracking.new(nodes, Log.newest_safe_transaction_id(log)),
+      follower_tracking:
+        FollowerTracking.new(nodes,
+          initial_transaction_id: Log.newest_safe_transaction_id(log)
+        ),
       log: log,
       interface: interface
     }
@@ -182,16 +185,11 @@ defmodule Bedrock.Raft.Mode.Leader do
       )
     end
 
-    FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
-    |> case do
-      :unknown ->
-        {:ok, t}
-
-      new_txn_id ->
-        t
-        |> try_to_reach_consensus(new_txn_id)
-        |> then(&{:ok, &1})
-    end
+    t
+    |> try_to_reach_consensus(
+      FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
+    )
+    |> then(&{:ok, &1})
   end
 
   def append_entries_ack_received(t, term, _, _) when term > t.term, do: become_follower(t)
@@ -224,7 +222,10 @@ defmodule Bedrock.Raft.Mode.Leader do
     track_heartbeat(t.term)
 
     t
-    |> send_append_entries_to_followers(t.nodes)
+    |> send_append_entries_to_followers(
+      t.follower_tracking
+      |> FollowerTracking.followers_not_seen_in(t.interface.heartbeat_ms())
+    )
     |> reset_timer()
     |> then(&{:ok, &1})
   end
