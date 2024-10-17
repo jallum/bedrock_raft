@@ -182,8 +182,10 @@ defmodule Bedrock.Raft.Mode.Follower do
   def append_entries_received(t, term, _, _, _, _) when term > t.term, do: t |> become_follower()
   def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
 
-  @spec timer_ticked(t()) :: :become_candidate
-  def timer_ticked(t), do: t |> become_candidate()
+  @impl true
+  @spec timer_ticked(t(), :election) :: :become_candidate
+  def timer_ticked(t, :election), do: t |> become_candidate()
+  def timer_ticked(t, _), do: {:ok, t}
 
   def try_to_append_transactions(t, _prev_transaction, []), do: t
 

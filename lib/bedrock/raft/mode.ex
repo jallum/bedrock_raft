@@ -2,6 +2,8 @@ defmodule Bedrock.Raft.Mode do
   @moduledoc false
   alias Bedrock.Raft
 
+  @callback timer_ticked(any(), :heartbeat | :election) :: {:ok, any()} | :become_candidate
+
   @callback add_transaction(any(), transaction_payload :: term()) ::
               {:ok, any(), Raft.transaction_id()} | {:error, :not_leader}
 

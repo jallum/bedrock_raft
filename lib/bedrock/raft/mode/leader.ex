@@ -217,8 +217,9 @@ defmodule Bedrock.Raft.Mode.Leader do
   The timer has ticked. We'll send notices to all the nodes, and start the
   timer again.
   """
-  @spec timer_ticked(t()) :: {:ok, t()}
-  def timer_ticked(t) do
+  @impl true
+  @spec timer_ticked(t(), :heartbeat) :: {:ok, t()}
+  def timer_ticked(t, :heartbeat) do
     track_heartbeat(t.term)
 
     t
@@ -229,6 +230,8 @@ defmodule Bedrock.Raft.Mode.Leader do
     |> reset_timer()
     |> then(&{:ok, &1})
   end
+
+  def timer_ticked(t, _), do: {:ok, t}
 
   @spec send_append_entries_to_followers(t(), nodes :: [Raft.service()]) :: t()
   defp send_append_entries_to_followers(t, nodes) do

@@ -169,18 +169,11 @@ defmodule Bedrock.Raft do
   where the work gets done. Events can come from other nodes or from a timer.
   """
   @spec handle_event(t(), event :: any(), source :: service() | :timer) :: t()
-  def handle_event(%{mode: %mode{}} = t, :election, :timer) when mode in [Follower, Candidate] do
-    mode.timer_ticked(t.mode)
+  def handle_event(%{mode: %mode{}} = t, name, :timer) do
+    mode.timer_ticked(t.mode, name)
     |> case do
       :become_candidate -> t |> become_candidate(next_term(t), log(t))
       {:ok, mode} -> %{t | mode: mode}
-    end
-  end
-
-  def handle_event(%{mode: %mode{}} = t, :heartbeat, :timer) when mode in [Leader] do
-    mode.timer_ticked(t.mode)
-    |> case do
-      {:ok, %Leader{} = leader} -> %{t | mode: leader}
     end
   end
 
@@ -228,10 +221,10 @@ defmodule Bedrock.Raft do
     end
   end
 
-  def handle_event(t, event, from) do
-    apply(t.interface, :ignored_event, [event, from])
-    t
-  end
+  # def handle_event(t, event, from) do
+  #   apply(t.interface, :ignored_event, [event, from])
+  #   t
+  # end
 
   defp become_candidate(t, term, log) do
     Candidate.new(term, t.quorum, t.nodes, log, t.interface)
@@ -268,11 +261,12 @@ defmodule Bedrock.Raft do
 
   @spec notify_change_in_leadership(t(), old_leader :: Raft.service()) :: t()
   defp notify_change_in_leadership(t, old_leader) do
-    current_leader = t |> leadership()
+    current_leader = t |> leader()
 
     if current_leader != old_leader do
-      apply(t.interface, :leadership_changed, [current_leader])
-      track_leadership_change(current_leader, term(t))
+      current_term = t |> term()
+      apply(t.interface, :leadership_changed, [{current_leader, current_term}])
+      track_leadership_change(current_leader, current_term)
     end
 
     t

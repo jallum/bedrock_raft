@@ -51,19 +51,31 @@ defmodule Bedrock.Raft.Mode.Candidate do
   import Bedrock.Raft.Telemetry,
     only: [
       track_request_votes: 3,
-      track_election_ended: 3
+      track_vote_received: 2,
+      track_election_ended: 3,
+      track_vote_sent: 2
     ]
 
-  @type t :: %__MODULE__{}
-  defstruct ~w[
-    term
-    quorum
-    nodes
-    votes
-    log
-    interface
-    cancel_timer_fn
-  ]a
+  @type t :: %__MODULE__{
+          term: Raft.election_term(),
+          quorum: Raft.quorum(),
+          nodes: [Raft.service()],
+          votes: [Raft.service()],
+          voted_for: Raft.service() | nil,
+          log: Log.t(),
+          interface: module(),
+          cancel_timer_fn: function() | nil
+        }
+  defstruct [
+    :term,
+    :quorum,
+    :nodes,
+    :votes,
+    :voted_for,
+    :log,
+    :interface,
+    :cancel_timer_fn
+  ]
 
   @spec new(
           Raft.election_term(),
@@ -79,6 +91,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
       quorum: quorum,
       nodes: nodes,
       votes: [],
+      voted_for: nil,
       log: log,
       interface: interface
     }
@@ -93,7 +106,17 @@ defmodule Bedrock.Raft.Mode.Candidate do
           candidate :: Raft.service(),
           candidate_last_transaction_id :: Raft.transaction_id()
         ) :: {:ok, t()} | :become_follower
-  def vote_requested(t, term, _, _) when term > t.term, do: :become_follower
+  def vote_requested(t, term, candidate, candidate_newest_transaction_id)
+      when term >= t.term and is_nil(t.voted_for) do
+    if candidate_newest_transaction_id >= Log.newest_transaction_id(t.log) do
+      t
+      |> vote_for(candidate, term)
+    else
+      t
+    end
+    |> then(&{:ok, &1})
+  end
+
   def vote_requested(t, _, _, _), do: {:ok, t}
 
   @doc """
@@ -108,8 +131,10 @@ defmodule Bedrock.Raft.Mode.Candidate do
   @impl true
   @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
           :become_leader | :become_follower | {:ok, t()}
-  def vote_received(t, term, follower) when term == t.term,
-    do: t |> add_to_votes(follower) |> become_leader_with_quorum()
+  def vote_received(t, term, follower) when term == t.term do
+    track_vote_received(term, follower)
+    t |> add_to_votes(follower) |> become_leader_with_quorum()
+  end
 
   def vote_received(t, term, _) when term > t.term, do: t |> become_follower()
   def vote_received(t, _, _), do: {:ok, t}
@@ -162,8 +187,9 @@ defmodule Bedrock.Raft.Mode.Candidate do
   def append_entries_received(t, term, _, _, _, _) when term > t.term, do: become_follower(t)
   def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
 
-  @spec timer_ticked(t()) :: {:ok, t()}
-  def timer_ticked(t) do
+  @impl true
+  @spec timer_ticked(t(), :election) :: {:ok, t()}
+  def timer_ticked(t, :election) do
     track_election_ended(t.term, t.votes, t.quorum)
 
     t
@@ -172,6 +198,8 @@ defmodule Bedrock.Raft.Mode.Candidate do
     |> request_votes()
     |> then(&{:ok, &1})
   end
+
+  def timer_ticked(t, _), do: {:ok, t}
 
   @spec become_follower(t()) :: :become_follower
   def become_follower(t) do
@@ -186,6 +214,13 @@ defmodule Bedrock.Raft.Mode.Candidate do
   end
 
   defp clear_votes(t), do: %{t | votes: []}
+
+  @spec vote_for(t(), Raft.service(), Raft.election_term()) :: t()
+  defp vote_for(t, candidate, term) do
+    track_vote_sent(candidate, term)
+    apply(t.interface, :send_event, [candidate, {:vote, term}])
+    %{t | voted_for: candidate, term: term}
+  end
 
   @spec request_votes(t()) :: t()
   defp request_votes(t) do
