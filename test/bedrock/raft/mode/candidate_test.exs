@@ -17,16 +17,16 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
 
   describe "new/5" do
     test "creates a new candidate and requests votes", %{log: log} do
-      nodes = [:b, :c]
+      peers = [:b, :c]
       expect(MockInterface, :timer, fn :election -> fn -> :ok end end)
       expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
 
-      candidate = Candidate.new(1, 1, nodes, log, MockInterface)
+      candidate = Candidate.new(1, 1, peers, log, MockInterface)
 
       assert %Candidate{
                term: 1,
                quorum: 1,
-               nodes: ^nodes,
+               peers: ^peers,
                votes: [],
                log: ^log,
                interface: MockInterface

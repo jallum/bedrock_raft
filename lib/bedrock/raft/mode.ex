@@ -10,18 +10,18 @@ defmodule Bedrock.Raft.Mode do
   @callback vote_requested(
               any(),
               Raft.election_term(),
-              candidate :: Raft.service(),
+              candidate :: Raft.peer(),
               candidate_last_transaction_id :: Raft.transaction_id()
             ) :: {:ok, any()} | :become_follower
 
-  @callback vote_received(any(), Raft.election_term(), follower :: Raft.service()) ::
+  @callback vote_received(any(), Raft.election_term(), follower :: Raft.peer()) ::
               :become_leader | :become_follower | {:ok, any()}
 
   @callback append_entries_ack_received(
               any(),
               Raft.election_term(),
               newest_transaction_id :: Raft.transaction_id(),
-              follower :: Raft.service()
+              follower :: Raft.peer()
             ) :: {:ok, any()} | :become_follower
 
   @callback append_entries_received(
@@ -30,7 +30,7 @@ defmodule Bedrock.Raft.Mode do
               prev_transaction_id :: Raft.transaction_id(),
               transactions :: [Raft.transaction()],
               commit_transaction_id :: Raft.transaction_id(),
-              from :: Raft.service()
+              from :: Raft.peer()
             ) ::
               {:ok, any()} | :become_follower
 end

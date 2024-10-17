@@ -1,7 +1,7 @@
 defmodule Bedrock.Raft.Mode.Candidate do
   @moduledoc """
   The Candidate state of the RAFT consensus protocol is a critical stage that
-  occurs when a node in the Raft cluster transitions from a Follower to a
+  occurs when a peer in the Raft cluster transitions from a Follower to a
   Candidate. This phase is integral to the leader election process in Raft.
 
   Here are the key aspects of the Candidate phase:
@@ -12,23 +12,23 @@ defmodule Bedrock.Raft.Mode.Candidate do
     the follower to become a candidate.
 
   - Increment Term and Vote for Self: Upon entering the Candidate phase, the
-    node increments its current term number (a logical clock) and votes for
+    peer increments its current term number (a logical clock) and votes for
     itself. This is the start of attempting to become the new leader.
 
   - Requesting Votes: The candidate then sends out RequestVote RPCs (Remote
-    Procedure Calls) to all other nodes in the cluster. In these requests, the
+    Procedure Calls) to all other peers in the cluster. In these requests, the
     candidate includes its term number and the last log entry it has, which
-    helps other nodes decide whether to grant their vote to the candidate.
+    helps other peers decide whether to grant their vote to the candidate.
 
   - Majority Votes: To become a leader, the candidate needs to receive votes
-    from a majority (quorum) of the nodes in the cluster. This majority is
+    from a majority (quorum) of the peers in the cluster. This majority is
     essential for ensuring only one leader is elected per term and to maintain
     consistency.
 
   - Handling Parallel Elections: If multiple followers become candidates
     simultaneously, parallel elections can occur. This might lead to a split
     vote, where no candidate receives the majority. If this happens, a new
-    election term begins, and nodes will retry the election process.
+    election term begins, and peers will retry the election process.
 
   - Timeout and Retry: If a candidate does not get a majority of votes within a
     certain timeout period, it will restart the election process. This involves
@@ -37,8 +37,8 @@ defmodule Bedrock.Raft.Mode.Candidate do
   - Transition to Leader: If the candidate receives the majority of votes, it
     transitions to the Leader phase.
 
-  - Response to External Leader Claim: If, during the candidate phase, a node
-    receives a legitimate AppendEntries RPC from another node claiming to be
+  - Response to External Leader Claim: If, during the candidate phase, a peer
+    receives a legitimate AppendEntries RPC from another peer claiming to be
     the leader, and the claimant's term is at least as large as the candidate’s
     current term, the candidate reverts to a follower. This ensures that there
     is only one leader at a time in the cluster.
@@ -59,9 +59,9 @@ defmodule Bedrock.Raft.Mode.Candidate do
   @type t :: %__MODULE__{
           term: Raft.election_term(),
           quorum: Raft.quorum(),
-          nodes: [Raft.service()],
-          votes: [Raft.service()],
-          voted_for: Raft.service() | nil,
+          peers: [Raft.peer()],
+          votes: [Raft.peer()],
+          voted_for: Raft.peer() | nil,
           log: Log.t(),
           interface: module(),
           cancel_timer_fn: function() | nil
@@ -69,7 +69,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
   defstruct [
     :term,
     :quorum,
-    :nodes,
+    :peers,
     :votes,
     :voted_for,
     :log,
@@ -80,16 +80,16 @@ defmodule Bedrock.Raft.Mode.Candidate do
   @spec new(
           Raft.election_term(),
           Raft.quorum(),
-          [Raft.service()],
+          [Raft.peer()],
           log :: Log.t(),
           interface :: module()
         ) ::
           t()
-  def new(term, quorum, nodes, log, interface) do
+  def new(term, quorum, peers, log, interface) do
     %__MODULE__{
       term: term,
       quorum: quorum,
-      nodes: nodes,
+      peers: peers,
       votes: [],
       voted_for: nil,
       log: log,
@@ -103,14 +103,13 @@ defmodule Bedrock.Raft.Mode.Candidate do
   @spec vote_requested(
           t(),
           Raft.election_term(),
-          candidate :: Raft.service(),
+          candidate :: Raft.peer(),
           candidate_last_transaction_id :: Raft.transaction_id()
         ) :: {:ok, t()} | :become_follower
   def vote_requested(t, term, candidate, candidate_newest_transaction_id)
       when term >= t.term and is_nil(t.voted_for) do
     if candidate_newest_transaction_id >= Log.newest_transaction_id(t.log) do
-      t
-      |> vote_for(candidate, term)
+      t |> vote_for(term, candidate)
     else
       t
     end
@@ -129,7 +128,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
   Otherwise, we just ignore the vote.
   """
   @impl true
-  @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
+  @spec vote_received(t(), Raft.election_term(), follower :: Raft.peer()) ::
           :become_leader | :become_follower | {:ok, t()}
   def vote_received(t, term, follower) when term == t.term do
     track_vote_received(term, follower)
@@ -139,7 +138,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
   def vote_received(t, term, _) when term > t.term, do: t |> become_follower()
   def vote_received(t, _, _), do: {:ok, t}
 
-  @spec add_to_votes(t(), follower :: Raft.service()) :: t()
+  @spec add_to_votes(t(), follower :: Raft.peer()) :: t()
   def add_to_votes(t, follower),
     do: if(follower in t.votes, do: t, else: %{t | votes: [follower | t.votes]})
 
@@ -164,7 +163,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
           any(),
           Raft.election_term(),
           newest_transaction_id :: Raft.transaction_id(),
-          follower :: Raft.service()
+          follower :: Raft.peer()
         ) :: {:ok, any()} | :become_follower
   def append_entries_ack_received(t, term, _, _) when term >= t.term, do: become_follower(t)
   def append_entries_ack_received(t, _, _, _), do: {:ok, t}
@@ -181,7 +180,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
           prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
           commit_transaction_id :: Raft.transaction_id(),
-          from :: Raft.service()
+          from :: Raft.peer()
         ) ::
           {:ok, t()} | :become_follower
   def append_entries_received(t, term, _, _, _, _) when term >= t.term, do: become_follower(t)
@@ -215,9 +214,9 @@ defmodule Bedrock.Raft.Mode.Candidate do
 
   defp clear_votes(t), do: %{t | votes: []}
 
-  @spec vote_for(t(), Raft.service(), Raft.election_term()) :: t()
-  defp vote_for(t, candidate, term) do
-    track_vote_sent(candidate, term)
+  @spec vote_for(t(), Raft.election_term(), Raft.peer()) :: t()
+  defp vote_for(t, term, candidate) do
+    track_vote_sent(term, candidate)
     apply(t.interface, :send_event, [candidate, {:vote, term}])
     %{t | voted_for: candidate, term: term}
   end
@@ -225,9 +224,9 @@ defmodule Bedrock.Raft.Mode.Candidate do
   @spec request_votes(t()) :: t()
   defp request_votes(t) do
     my_newest_txn_id = Log.newest_transaction_id(t.log)
-    track_request_votes(t.term, t.nodes, my_newest_txn_id)
+    track_request_votes(t.term, t.peers, my_newest_txn_id)
     event = {:request_vote, t.term, my_newest_txn_id}
-    t.nodes |> Enum.each(&apply(t.interface, :send_event, [&1, event]))
+    t.peers |> Enum.each(&apply(t.interface, :send_event, [&1, event]))
     t
   end
 

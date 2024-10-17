@@ -23,7 +23,7 @@ defmodule Bedrock.Raft.Interface do
   @doc """
   An unhandled event has occurred.
   """
-  @callback ignored_event(event :: any(), from :: Raft.service() | :timer) :: :ok
+  @callback ignored_event(event :: any(), from :: Raft.peer() | :timer) :: :ok
 
   @doc """
   Set the leader of the Raft cluster.
@@ -31,19 +31,19 @@ defmodule Bedrock.Raft.Interface do
   @callback leadership_changed(Raft.leadership()) :: :ok
 
   @doc """
-  Set a timer for a Raft node. It's expected that the protocol will be notified
+  Set a timer for a Raft peer. It's expected that the protocol will be notified
   when the timer expires.
   """
   @callback timer(:election | :heartbeat) :: cancel_timer_fn()
 
   @doc """
-  Send an event to a Raft node.
+  Send an event to a Raft peer.
   """
-  @callback send_event(to :: Raft.service(), event :: any()) :: :ok
+  @callback send_event(to :: Raft.peer(), event :: any()) :: :ok
 
   @doc """
   Signal that a consensus has been reached up to the given transaction by the
-  quorum of Raft nodes.
+  quorum of Raft peers.
   """
   @callback consensus_reached(Raft.Log.t(), Raft.transaction_id()) :: :ok
 end

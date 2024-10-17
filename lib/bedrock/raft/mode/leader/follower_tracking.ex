@@ -20,7 +20,7 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   defp default_timestamp_impl, do: :os.system_time(:millisecond)
 
   @spec new(
-          followers :: [Raft.service()],
+          followers :: [Raft.peer()],
           opts :: [
             initial_transaction_id: Raft.transaction_id(),
             timestamp_fn: timestamp_fn()
@@ -46,7 +46,7 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   @spec timestamp(t()) :: integer()
   def timestamp(%{timestamp_fn: timestamp_fn}), do: timestamp_fn.()
 
-  @spec last_sent_transaction_id(t(), Raft.service()) :: Raft.transaction_id()
+  @spec last_sent_transaction_id(t(), Raft.peer()) :: Raft.transaction_id()
   def last_sent_transaction_id(t, follower) do
     t.table
     |> :ets.lookup(follower)
@@ -56,7 +56,7 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
     end
   end
 
-  @spec newest_transaction_id(t(), Raft.service()) :: Raft.transaction_id()
+  @spec newest_transaction_id(t(), Raft.peer()) :: Raft.transaction_id()
   def newest_transaction_id(t, follower) do
     t.table
     |> :ets.lookup(follower)
@@ -88,13 +88,13 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
     |> Enum.at(-quorum)
   end
 
-  @spec update_last_sent_transaction_id(t(), Raft.service(), Raft.transaction_id()) :: t()
+  @spec update_last_sent_transaction_id(t(), Raft.peer(), Raft.transaction_id()) :: t()
   def update_last_sent_transaction_id(t, follower, last_transaction_id_sent) do
     t.table |> :ets.update_element(follower, {2, last_transaction_id_sent})
     t
   end
 
-  @spec update_newest_transaction_id(t(), Raft.service(), Raft.transaction_id()) :: t()
+  @spec update_newest_transaction_id(t(), Raft.peer(), Raft.transaction_id()) :: t()
   def update_newest_transaction_id(t, follower, newest_transaction_id) do
     now = timestamp(t)
     t.table |> :ets.insert({follower, newest_transaction_id, newest_transaction_id, now})

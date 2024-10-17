@@ -1,6 +1,6 @@
 defmodule Bedrock.Raft.Mode.Follower do
   @moduledoc """
-  The Follower state of the RAFT protocol. This is the state that a node is in
+  The Follower state of the RAFT protocol. This is the state that a peer is in
   when it is not the leader, and is waiting for a leader to emerge, but has not
   yet decided to stand as a candidate for election itself.
 
@@ -39,11 +39,21 @@ defmodule Bedrock.Raft.Mode.Follower do
       track_leadership_change: 2,
       track_consensus_reached: 1,
       track_vote_sent: 2,
-      track_append_entries_received: 5
+      track_append_entries_received: 5,
+      track_append_entries_ack_sent: 3
     ]
 
-  @type t :: %__MODULE__{}
+  @type t :: %__MODULE__{
+          me: Raft.peer(),
+          term: Raft.election_term(),
+          leader: Raft.peer() | :undecided,
+          voted_for: Raft.peer() | nil,
+          cancel_timer_fn: function() | nil,
+          log: Log.t(),
+          interface: module()
+        }
   defstruct ~w[
+      me
       term
       leader
       voted_for
@@ -52,30 +62,26 @@ defmodule Bedrock.Raft.Mode.Follower do
       interface
     ]a
 
-  @spec new(Raft.election_term(), Log.t(), interface :: module(), leader :: Raft.service()) :: t()
-  def new(term, log, interface, leader \\ :undecided)
-
-  def new(term, log, interface, :undecided) do
+  @spec new(
+          Raft.election_term(),
+          Log.t(),
+          interface :: module(),
+          me :: Raft.peer(),
+          leader :: Raft.peer()
+        ) :: t()
+  def new(term, log, interface, me, leader \\ :undecided) do
     %__MODULE__{
+      me: me,
       term: term,
-      voted_for: nil,
-      leader: :undecided,
-      log: log,
-      interface: interface
-    }
-    |> set_timer()
-  end
-
-  def new(term, log, interface, leader) do
-    %__MODULE__{
-      term: term,
-      voted_for: leader,
       leader: leader,
       log: log,
       interface: interface
     }
     |> set_timer()
-    |> send_append_entries_ack()
+    |> case do
+      %{leader: :undecided} = t -> t
+      t -> t |> send_append_entries_ack()
+    end
   end
 
   @doc """
@@ -90,7 +96,7 @@ defmodule Bedrock.Raft.Mode.Follower do
   @spec vote_requested(
           t(),
           Raft.election_term(),
-          candidate :: Raft.service(),
+          candidate :: Raft.peer(),
           candidate_last_transaction_id :: Raft.transaction_id()
         ) :: {:ok, t()} | :become_follower
   def vote_requested(t, term, candidate, candidate_newest_transaction_id)
@@ -98,7 +104,7 @@ defmodule Bedrock.Raft.Mode.Follower do
     if candidate_newest_transaction_id >= Log.newest_transaction_id(t.log) do
       t
       |> reset_timer()
-      |> vote_for(candidate, term)
+      |> vote_for(term, candidate)
     else
       t
     end
@@ -110,7 +116,7 @@ defmodule Bedrock.Raft.Mode.Follower do
   @doc """
   """
   @impl true
-  @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
+  @spec vote_received(t(), Raft.election_term(), follower :: Raft.peer()) ::
           :become_follower | {:ok, t()}
   def vote_received(t, term, _) when term >= t.term, do: become_follower(t)
   def vote_received(t, _, _), do: {:ok, t}
@@ -133,7 +139,7 @@ defmodule Bedrock.Raft.Mode.Follower do
           t(),
           Raft.election_term(),
           newest_transaction_id :: Raft.transaction_id(),
-          follower :: Raft.service()
+          follower :: Raft.peer()
         ) :: {:ok, t()} | :become_follower
   def append_entries_ack_received(t, term, _, _) when term >= t.term, do: t |> become_follower()
   def append_entries_ack_received(t, _, _, _), do: {:ok, t}
@@ -150,7 +156,7 @@ defmodule Bedrock.Raft.Mode.Follower do
           prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
           commit_transaction_id :: Raft.transaction_id(),
-          from :: Raft.service()
+          from :: Raft.peer()
         ) ::
           {:ok, t()} | :become_follower
   def append_entries_received(
@@ -262,17 +268,20 @@ defmodule Bedrock.Raft.Mode.Follower do
   defp send_append_entries_ack(t) when t.leader == :undecided, do: t
 
   defp send_append_entries_ack(t) do
+    newest_transaction_id = Log.newest_transaction_id(t.log)
+    track_append_entries_ack_sent(t.term, t.me, newest_transaction_id)
+
     apply(t.interface, :send_event, [
       t.leader,
-      {:append_entries_ack, t.term, Log.newest_transaction_id(t.log)}
+      {:append_entries_ack, t.term, newest_transaction_id}
     ])
 
     t
   end
 
-  @spec vote_for(t(), Raft.service(), Raft.election_term()) :: t()
-  defp vote_for(t, candidate, term) do
-    track_vote_sent(candidate, term)
+  @spec vote_for(t(), Raft.election_term(), Raft.peer()) :: t()
+  defp vote_for(t, term, candidate) do
+    track_vote_sent(term, candidate)
     apply(t.interface, :send_event, [candidate, {:vote, term}])
     %{t | voted_for: candidate, term: term}
   end

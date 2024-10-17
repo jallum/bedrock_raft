@@ -17,8 +17,8 @@ defmodule Bedrock.Raft do
   @type election_term :: non_neg_integer()
   @type index :: non_neg_integer()
   @type quorum :: non_neg_integer()
-  @type service :: atom() | pid() | {atom(), node()}
-  @type leadership :: {leader :: :undecided | service(), election_term()}
+  @type peer :: atom() | pid() | {atom(), peer()}
+  @type leadership :: {leader :: :undecided | peer(), election_term()}
   @type binary_transaction_id :: binary()
   @type tuple_transaction_id :: {term :: election_term(), index :: non_neg_integer()}
   @type transaction_id :: binary_transaction_id() | tuple_transaction_id()
@@ -33,23 +33,23 @@ defmodule Bedrock.Raft do
 
   import Bedrock.Raft.Telemetry,
     only: [
-      track_became_follower: 1,
-      track_became_candidate: 1,
-      track_became_leader: 1,
+      track_became_follower: 2,
+      track_became_candidate: 3,
+      track_became_leader: 3,
       track_leadership_change: 2
     ]
 
   @type t :: %__MODULE__{
-          me: service(),
+          me: peer(),
           mode: Follower.t() | Candidate.t() | Leader.t() | nil,
-          nodes: [service()],
+          peers: [peer()],
           quorum: pos_integer(),
           interface: module()
         }
   defstruct ~w[
       me
       mode
-      nodes
+      peers
       quorum
       interface
     ]a
@@ -58,26 +58,26 @@ defmodule Bedrock.Raft do
   Create a new RAFT consensus protocol instance.
   """
   @spec new(
-          me :: service(),
-          nodes :: [service()],
+          me :: peer(),
+          peers :: [peer()],
           log :: Log.t(),
           interface :: module()
         ) :: t()
-  def new(me, nodes, log, interface) do
+  def new(me, peers, log, interface) do
     # Assume that we'll always vote for ourselves, so majority - 1.
-    quorum = determine_majority([me | nodes]) - 1
+    quorum = determine_majority([me | peers]) - 1
 
     # Start with the newest term in the log.
     term = Log.newest_safe_transaction_id(log) |> TransactionID.term()
 
     %__MODULE__{
       me: me,
-      nodes: nodes,
+      peers: peers,
       quorum: quorum,
       interface: interface
     }
     |> then(fn t ->
-      # If we're the only node, we can be the leader.
+      # If we're the only peer, we can be the leader.
       if quorum == 0 do
         t |> become_leader(term, log)
       else
@@ -105,13 +105,13 @@ defmodule Bedrock.Raft do
   def next_transaction_id(_t), do: {:error, :not_leader}
 
   @doc """
-  Return the node that this protocol instance is running on.
+  Return the peer that this protocol instance is running on.
   """
-  @spec me(t()) :: service()
+  @spec me(t()) :: peer()
   def me(%{me: me}), do: me
 
   @doc """
-  Return true if this node is the leader of the cluster.
+  Return true if this peer is the leader of the cluster.
   """
   @spec am_i_the_leader?(t()) :: boolean()
   def am_i_the_leader?(%{mode: %Leader{}}), do: true
@@ -120,7 +120,7 @@ defmodule Bedrock.Raft do
   @doc """
   Return the current leader of the cluster, if any.
   """
-  @spec leader(t()) :: service() | :undecided
+  @spec leader(t()) :: peer() | :undecided
   def leader(%{mode: %Follower{}} = t), do: t.mode.leader
   def leader(%{mode: %Leader{}} = t), do: t.me
   def leader(%{mode: %Candidate{}}), do: :undecided
@@ -141,15 +141,15 @@ defmodule Bedrock.Raft do
   def leadership(t), do: {leader(t), term(t)}
 
   @doc """
-  Return the nodes in the cluster, including ourselves.
+  Return the peers in the cluster, including ourselves.
   """
-  @spec known_nodes(t()) :: [service()]
-  def known_nodes(t), do: [t.me | t.nodes]
+  @spec known_peers(t()) :: [peer()]
+  def known_peers(t), do: [t.me | t.peers]
 
   @doc """
   Add a transaction to the log. This is the only way to add transactions to the
   log. Transactions are not committed until the leader replicates them to a
-  quorum of nodes. Transactions can only be submitted to the leader.
+  quorum of peers. Transactions can only be submitted to the leader.
   """
   @spec add_transaction(t(), transaction_payload :: any()) ::
           {:ok, t(), transaction_id()} | {:error, :not_leader}
@@ -166,9 +166,9 @@ defmodule Bedrock.Raft do
 
   @doc """
   Handle an event from outside the protocol. Timers, messages, etc. This is
-  where the work gets done. Events can come from other nodes or from a timer.
+  where the work gets done. Events can come from other peers or from a timer.
   """
-  @spec handle_event(t(), event :: any(), source :: service() | :timer) :: t()
+  @spec handle_event(t(), event :: any(), source :: peer() | :timer) :: t()
   def handle_event(%{mode: %mode{}} = t, name, :timer) do
     mode.timer_ticked(t.mode, name)
     |> case do
@@ -227,27 +227,27 @@ defmodule Bedrock.Raft do
   # end
 
   defp become_candidate(t, term, log) do
-    Candidate.new(term, t.quorum, t.nodes, log, t.interface)
+    Candidate.new(term, t.quorum, t.peers, log, t.interface)
     |> then(fn c ->
-      track_became_candidate(c)
+      track_became_candidate(term, c.quorum, c.peers)
       %{t | mode: c}
     end)
     |> notify_change_in_leadership(leader(t))
   end
 
   defp become_follower(t, leader, term, log) do
-    Follower.new(term, log, t.interface, leader)
+    Follower.new(term, log, t.interface, t.me, leader)
     |> then(fn f ->
-      track_became_follower(f)
+      track_became_follower(term, leader)
       %{t | mode: f}
     end)
     |> notify_change_in_leadership(leader(t))
   end
 
   defp become_leader(t, term, log) do
-    Leader.new(term, t.quorum, t.nodes, log, t.interface)
+    Leader.new(term, t.quorum, t.peers, log, t.interface)
     |> then(fn l ->
-      track_became_leader(l)
+      track_became_leader(term, l.quorum, l.peers)
       %{t | mode: l}
     end)
     |> notify_change_in_leadership(leader(t))
@@ -256,10 +256,10 @@ defmodule Bedrock.Raft do
   @spec next_term(t()) :: Raft.election_term()
   defp next_term(t), do: 1 + term(t)
 
-  @spec determine_majority([service()]) :: non_neg_integer()
-  defp determine_majority(nodes), do: 1 + (nodes |> length() |> div(2))
+  @spec determine_majority([peer()]) :: non_neg_integer()
+  defp determine_majority(peers), do: 1 + (peers |> length() |> div(2))
 
-  @spec notify_change_in_leadership(t(), old_leader :: Raft.service()) :: t()
+  @spec notify_change_in_leadership(t(), old_leader :: Raft.peer()) :: t()
   defp notify_change_in_leadership(t, old_leader) do
     current_leader = t |> leader()
 

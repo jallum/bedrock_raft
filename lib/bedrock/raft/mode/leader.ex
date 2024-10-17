@@ -1,27 +1,27 @@
 defmodule Bedrock.Raft.Mode.Leader do
   @moduledoc """
   The Leader phase in the Raft Consensus Protocol is a crucial stage where a
-  node assumes the role of a leader in the Raft cluster. Once a node becomes a
+  peer assumes the role of a leader in the Raft cluster. Once a peer becomes a
   leader, it is responsible for managing the replicated log and ensuring
   consistency across the cluster.
 
   Here are the key aspects of the Leader phase:
 
-  - Assumption of Leadership: After a node wins an election during the
+  - Assumption of Leadership: After a peer wins an election during the
     Candidate phase by receiving the majority of votes, it transitions to the
     Leader phase. It assumes authority and starts to manage the cluster's log
     replication.
 
   - Sending Heartbeats: One of the first actions of the leader is to send out
     heartbeat messages (using AppendEntries RPCs with no log entries) to all
-    follower nodes. These heartbeats serve two purposes: they inform followers
+    follower peers. These heartbeats serve two purposes: they inform followers
     that there is a stable leader, and they prevent new elections from being
     triggered.
 
   - Log Replication: The leader receives client requests, each containing a
     command to be executed by the replicated state machines. The leader appends
     these commands as new entries in its log and then replicates these entries
-    to the follower nodes.
+    to the follower peers.
 
   - Handling Log Consistency: The leader must ensure that the followers' logs
     are consistent with its own. It does this by checking the consistency of
@@ -32,7 +32,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   - Committing Entries: After successfully replicating a log entry to the
     majority of the followers, the leader marks the entry as committed. This
     means the entry is safely stored and can be applied to the state machines
-    of all nodes. The leader also communicates to followers which entries are
+    of all peers. The leader also communicates to followers which entries are
     safe to commit.
 
   - Client Response: Once an entry is committed, the leader returns the result
@@ -52,7 +52,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     requests, but it typically first ensures it is still the leader by
     confirming it can communicate with the majority of the cluster.
 
-  - Term Change: If the leader receives a message from another node with a
+  - Term Change: If the leader receives a message from another peer with a
     higher term, it steps down and reverts to a follower, recognizing the
     authority of the higher term.
   """
@@ -71,44 +71,53 @@ defmodule Bedrock.Raft.Mode.Leader do
       track_append_entries_sent: 5
     ]
 
-  @type t :: %__MODULE__{}
-  defstruct ~w[
-    nodes
-    quorum
-    term
-    id_sequence
-    follower_tracking
-    cancel_timer_fn
-    log
-    interface
-  ]a
+  @type t :: %__MODULE__{
+          peers: [Raft.peer()],
+          quorum: Raft.quorum(),
+          term: Raft.election_term(),
+          id_sequence: non_neg_integer(),
+          follower_tracking: FollowerTracking.t(),
+          cancel_timer_fn: function() | nil,
+          log: Log.t(),
+          interface: module()
+        }
+  defstruct [
+    :peers,
+    :quorum,
+    :term,
+    :id_sequence,
+    :follower_tracking,
+    :cancel_timer_fn,
+    :log,
+    :interface
+  ]
 
   @doc """
-  Create a new leader. We'll send notices to all the nodes, and schedule the
+  Create a new leader. We'll send notices to all the peers, and schedule the
   timer to tick.
   """
   @spec new(
           Raft.election_term(),
           Raft.quorum(),
-          [Raft.service()],
+          [Raft.peer()],
           Log.t(),
           interface :: module()
         ) ::
           t()
-  def new(term, quorum, nodes, log, interface) do
+  def new(term, quorum, peers, log, interface) do
     %__MODULE__{
       quorum: quorum,
-      nodes: nodes,
+      peers: peers,
       term: term,
       id_sequence: 0,
       follower_tracking:
-        FollowerTracking.new(nodes,
+        FollowerTracking.new(peers,
           initial_transaction_id: Log.newest_safe_transaction_id(log)
         ),
       log: log,
       interface: interface
     }
-    |> send_append_entries_to_followers(nodes)
+    |> send_append_entries_to_followers(peers)
     |> set_timer()
   end
 
@@ -123,7 +132,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   @spec vote_requested(
           t(),
           Raft.election_term(),
-          candidate :: Raft.service(),
+          candidate :: Raft.peer(),
           candidate_last_transaction_id :: Raft.transaction_id()
         ) :: {:ok, t()} | :become_follower
   def vote_requested(t, term, _, _) when term > t.term, do: :become_follower
@@ -132,7 +141,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   @doc """
   """
   @impl true
-  @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
+  @spec vote_received(t(), Raft.election_term(), follower :: Raft.peer()) ::
           :become_follower | {:ok, t()}
   def vote_received(t, term, _) when term > t.term, do: become_follower(t)
   def vote_received(t, _, _), do: {:ok, t}
@@ -155,7 +164,7 @@ defmodule Bedrock.Raft.Mode.Leader do
 
       t =
         %{t | log: log}
-        |> send_append_entries_to_followers(t.nodes)
+        |> send_append_entries_to_followers(t.peers)
 
       {:ok, t, new_txn_id}
     end
@@ -170,7 +179,7 @@ defmodule Bedrock.Raft.Mode.Leader do
           t(),
           Raft.election_term(),
           newest_transaction_id :: Raft.transaction_id(),
-          follower :: Raft.service()
+          follower :: Raft.peer()
         ) ::
           {:ok, t()}
   def append_entries_ack_received(t, term, newest_transaction_id, _from = follower)
@@ -207,14 +216,14 @@ defmodule Bedrock.Raft.Mode.Leader do
           prev_transaction_id :: Raft.transaction_id(),
           transactions :: [Raft.transaction()],
           commit_transaction_id :: Raft.transaction_id(),
-          from :: Raft.service()
+          from :: Raft.peer()
         ) ::
           {:ok, t()} | :become_follower
   def append_entries_received(t, term, _, _, _, _) when term > t.term, do: t |> become_follower()
   def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
 
   @doc """
-  The timer has ticked. We'll send notices to all the nodes, and start the
+  The timer has ticked. We'll send notices to all the peers, and start the
   timer again.
   """
   @impl true
@@ -233,12 +242,12 @@ defmodule Bedrock.Raft.Mode.Leader do
 
   def timer_ticked(t, _), do: {:ok, t}
 
-  @spec send_append_entries_to_followers(t(), nodes :: [Raft.service()]) :: t()
-  defp send_append_entries_to_followers(t, nodes) do
+  @spec send_append_entries_to_followers(t(), peers :: [Raft.peer()]) :: t()
+  defp send_append_entries_to_followers(t, peers) do
     newest_safe_transaction_id =
       FollowerTracking.newest_safe_transaction_id(t.follower_tracking, t.quorum)
 
-    nodes
+    peers
     |> Enum.each(fn follower ->
       prev_transaction_id =
         FollowerTracking.last_sent_transaction_id(t.follower_tracking, follower)
@@ -256,8 +265,8 @@ defmodule Bedrock.Raft.Mode.Leader do
       end
 
       track_append_entries_sent(
-        follower,
         t.term,
+        follower,
         prev_transaction_id,
         transactions |> Enum.map(&elem(&1, 0)),
         newest_safe_transaction_id
@@ -280,7 +289,7 @@ defmodule Bedrock.Raft.Mode.Leader do
       :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
 
       %{t | log: log}
-      |> send_append_entries_to_followers(t.nodes)
+      |> send_append_entries_to_followers(t.peers)
     else
       t
     end

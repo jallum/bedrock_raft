@@ -22,7 +22,7 @@ defmodule Bedrock.RaftTest do
   end
 
   describe "Raft can be constructed" do
-    test "when creating an instance with no other nodes, we start out as a leader" do
+    test "when creating an instance with no other peers, we start out as a leader" do
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:a, 0} -> :ok end)
 
@@ -31,21 +31,21 @@ defmodule Bedrock.RaftTest do
       assert %Raft{
                me: :a,
                mode: %Leader{
-                 nodes: [],
+                 peers: [],
                  quorum: 0,
                  term: 0
                },
-               nodes: [],
+               peers: [],
                quorum: 0
              } = p
 
       assert :a = Raft.me(p)
       assert {:a, 0} = Raft.leadership(p)
       assert Raft.am_i_the_leader?(p)
-      assert [:a] = Raft.known_nodes(p)
+      assert [:a] = Raft.known_peers(p)
     end
 
-    test "when creating an instance with other nodes, we start out as a follower" do
+    test "when creating an instance with other peers, we start out as a follower" do
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
 
       p = Raft.new(:a, [:b], InMemoryLog.new(), MockInterface)
@@ -58,7 +58,7 @@ defmodule Bedrock.RaftTest do
                  voted_for: nil,
                  cancel_timer_fn: cancel_timer_fn
                },
-               nodes: [:b],
+               peers: [:b],
                quorum: 1
              } = p
 
@@ -67,10 +67,10 @@ defmodule Bedrock.RaftTest do
       assert :a = Raft.me(p)
       assert {:undecided, 0} = Raft.leadership(p)
       refute Raft.am_i_the_leader?(p)
-      assert [:a, :b] = Raft.known_nodes(p)
+      assert [:a, :b] = Raft.known_peers(p)
     end
 
-    test "when creating an instance with more than zero other nodes, we start out as a follower" do
+    test "when creating an instance with more than zero other peers, we start out as a follower" do
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
 
       p = Raft.new(:a, [:b], InMemoryLog.new(), MockInterface)
@@ -83,7 +83,7 @@ defmodule Bedrock.RaftTest do
                  voted_for: nil,
                  cancel_timer_fn: cancel_timer_fn
                },
-               nodes: [:b],
+               peers: [:b],
                quorum: 1
              } = p
 
@@ -92,24 +92,24 @@ defmodule Bedrock.RaftTest do
       assert :a = Raft.me(p)
       assert {:undecided, 0} = Raft.leadership(p)
       refute Raft.am_i_the_leader?(p)
-      assert [:a, :b] = Raft.known_nodes(p)
+      assert [:a, :b] = Raft.known_peers(p)
     end
   end
 
   describe "Raft elections" do
-    test "A happy-path election between three nodes that we started" do
+    test "A happy-path election between three peers that we started" do
       t0 = {0, 0}
 
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
 
       p = Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
 
-      # We haven't yet heard from any other nodes, so there's definitely no
+      # We haven't yet heard from any other peers, so there's definitely no
       # leader.
       assert {:undecided, 0} = Raft.leadership(p)
       refute Raft.am_i_the_leader?(p)
 
-      # Assuming that node :a's election timer expires, it will become a
+      # Assuming that peer :a's election timer expires, it will become a
       # candidate and start an election for term 2. It will send a request_vote
       # message to :b and :c.
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
@@ -123,10 +123,10 @@ defmodule Bedrock.RaftTest do
                mode: %Candidate{
                  term: 1,
                  quorum: 1,
-                 nodes: [:b, :c],
+                 peers: [:b, :c],
                  votes: []
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
@@ -134,7 +134,7 @@ defmodule Bedrock.RaftTest do
       assert {:undecided, 1} = Raft.leadership(p)
       refute Raft.am_i_the_leader?(p)
 
-      # Assuming that node :b receives the request_vote message first, it will
+      # Assuming that peer :b receives the request_vote message first, it will
       # respond with a vote for term 2. With one vote, we reach the quorum and
       # become leader.
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
@@ -153,15 +153,15 @@ defmodule Bedrock.RaftTest do
       assert %Raft{
                me: :a,
                mode: %Leader{
-                 nodes: [:b, :c],
+                 peers: [:b, :c],
                  quorum: 1,
                  term: 1
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
-      # Assuming that node :c also responds to the request_vote, we've already
+      # Assuming that peer :c also responds to the request_vote, we've already
       # reached the quorum and become leader. We'll ignore the vote.
 
       p = Raft.handle_event(p, {:vote, 1}, :c)
@@ -171,15 +171,15 @@ defmodule Bedrock.RaftTest do
       assert %Raft{
                me: :a,
                mode: %Leader{
-                 nodes: [:b, :c],
+                 peers: [:b, :c],
                  quorum: 1,
                  term: 1
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
-      # Assuming that node :c receives the ping and responds with a pong,
+      # Assuming that peer :c receives the ping and responds with a pong,
       # ensure that it is recorded properly.
       p = Raft.handle_event(p, {:append_entries_ack, 1, {0, 0}}, :c)
 
@@ -188,15 +188,15 @@ defmodule Bedrock.RaftTest do
       assert %Raft{
                me: :a,
                mode: %Leader{
-                 nodes: [:b, :c],
+                 peers: [:b, :c],
                  quorum: 1,
                  term: 1
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
-      # At the next heartbeat timer, assuming that node :c receives the ping and
+      # At the next heartbeat timer, assuming that peer :c receives the ping and
       # responds with a pong, ensure that it is recorded properly.
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
@@ -209,16 +209,16 @@ defmodule Bedrock.RaftTest do
       assert %Raft{
                me: :a,
                mode: %Leader{
-                 nodes: [:b, :c],
+                 peers: [:b, :c],
                  quorum: 1,
                  term: 1
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
     end
 
-    test "A happy-path election between three nodes that we vote in" do
+    test "A happy-path election between three peers that we vote in" do
       log = InMemoryLog.new()
 
       t0 = Log.initial_transaction_id(log)
@@ -236,7 +236,7 @@ defmodule Bedrock.RaftTest do
                  leader: :undecided,
                  voted_for: nil
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
@@ -256,7 +256,7 @@ defmodule Bedrock.RaftTest do
                  leader: :undecided,
                  voted_for: :c
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
@@ -278,7 +278,7 @@ defmodule Bedrock.RaftTest do
                  leader: :c,
                  voted_for: :c
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
@@ -309,10 +309,10 @@ defmodule Bedrock.RaftTest do
                mode: %Candidate{
                  term: 1,
                  quorum: 1,
-                 nodes: [:b, :c],
+                 peers: [:b, :c],
                  votes: []
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
@@ -332,15 +332,15 @@ defmodule Bedrock.RaftTest do
                mode: %Candidate{
                  term: 1,
                  quorum: 1,
-                 nodes: [:b, :c],
+                 peers: [:b, :c],
                  votes: []
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
     end
 
-    test "In a three node cluster, as a candidate we receive a vote from a follower in an older term" do
+    test "In a three peer cluster, as a candidate we receive a vote from a follower in an older term" do
       t0 = {0, 0}
 
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
@@ -366,7 +366,7 @@ defmodule Bedrock.RaftTest do
       assert {:undecided, 1} = Raft.leadership(p)
     end
 
-    test "In a three node cluster, as a candidate we receive a ping from a leader in the same term" do
+    test "In a three peer cluster, as a candidate we receive a ping from a leader in the same term" do
       t0 = {0, 0}
 
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
@@ -396,7 +396,7 @@ defmodule Bedrock.RaftTest do
       assert {:c, 2} = Raft.leadership(p)
     end
 
-    test "In a three node cluster, as a candidate we receive a ping from a leader in an older term" do
+    test "In a three peer cluster, as a candidate we receive a ping from a leader in an older term" do
       t0 = {0, 0}
 
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
@@ -422,7 +422,7 @@ defmodule Bedrock.RaftTest do
       assert {:undecided, 1} = Raft.leadership(p)
     end
 
-    test "In a three node cluster, after winning a successful election during a network split, a new leader was elected with no other missed transactions" do
+    test "In a three peer cluster, after winning a successful election during a network split, a new leader was elected with no other missed transactions" do
       t0 = {0, 0}
       t1 = {2, 0}
 
@@ -465,7 +465,7 @@ defmodule Bedrock.RaftTest do
       assert {:c, 2} = Raft.leadership(p)
     end
 
-    test "In a three node cluster, after winning a successful election during a network split, a new leader was elected with new transactions that we missed" do
+    test "In a three peer cluster, after winning a successful election during a network split, a new leader was elected with new transactions that we missed" do
       log = InMemoryLog.new(:tuple)
 
       t0 = Log.initial_transaction_id(log)
@@ -537,7 +537,7 @@ defmodule Bedrock.RaftTest do
   end
 
   describe "Raft quorum failures" do
-    test "A three node cluster where we are the leader, and quorum fails" do
+    test "A three peer cluster where we are the leader, and quorum fails" do
       log = InMemoryLog.new()
 
       t0 = Log.initial_transaction_id(log)
@@ -564,11 +564,11 @@ defmodule Bedrock.RaftTest do
       assert %Raft{
                me: :a,
                mode: %Leader{
-                 nodes: [:b, :c],
+                 peers: [:b, :c],
                  quorum: 1,
                  term: 1
                },
-               nodes: [:b, :c],
+               peers: [:b, :c],
                quorum: 1
              } = p
 
@@ -627,7 +627,7 @@ defmodule Bedrock.RaftTest do
   end
 
   describe "Raft log interaction" do
-    test "A three node cluster where we become the leader, and then we append an entry" do
+    test "A three peer cluster where we become the leader, and then we append an entry" do
       log = InMemoryLog.new()
 
       t0 = Log.initial_transaction_id(log)
@@ -728,7 +728,7 @@ defmodule Bedrock.RaftTest do
       assert t0 == p |> Raft.log() |> Log.newest_safe_transaction_id()
 
       # :b acknowledges the heartbeat saying that it has received up to t2, and
-      # we make a note of that. since we *also* have a copy of t2, two nodes
+      # we make a note of that. since we *also* have a copy of t2, two peers
       # constitutes a quorum and we can decide that consensus has been reached
       # up to t2. we then send out a new heartbeat to both :b and :c to let them
       # know that consensus has been reached up to t2.
@@ -753,7 +753,7 @@ defmodule Bedrock.RaftTest do
       assert t2 == p |> Raft.log() |> Log.newest_safe_transaction_id()
     end
 
-    test "A three node cluster where we are a follower, where we start off at nothing and need to catch up" do
+    test "A three peer cluster where we are a follower, where we start off at nothing and need to catch up" do
       log = InMemoryLog.new()
       t0 = Log.initial_transaction_id(log)
 

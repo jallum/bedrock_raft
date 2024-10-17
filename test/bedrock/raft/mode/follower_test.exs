@@ -18,7 +18,7 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
 
-      follower = Follower.new(term, log, MockInterface)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
       assert follower.term == term
       assert follower.leader == :undecided
       assert not is_nil(follower.cancel_timer_fn)
@@ -30,11 +30,11 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       term = 1
       log = InMemoryLog.new()
 
-      candidate = :node_1
+      candidate = :peer_1
       candidate_last_transaction = {1, 1}
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
-      follower = Follower.new(term, log, MockInterface)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       expect(MockInterface, :send_event, fn ^candidate, {:vote, ^term} -> :ok end)
@@ -48,11 +48,11 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
     test "does not vote for a candidate when already voted for another" do
       term = 1
       log = InMemoryLog.new()
-      candidate = :node_1
+      candidate = :peer_1
       candidate_last_transaction = {1, 1}
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
-      follower = Follower.new(term, log, MockInterface)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       expect(MockInterface, :send_event, fn ^candidate, {:vote, ^term} -> :ok end)
@@ -62,13 +62,13 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
 
       assert follower.voted_for == candidate
 
-      candidate = :node_2
+      candidate = :peer_2
       candidate_last_transaction = {1, 2}
 
       {:ok, follower} =
         Follower.vote_requested(follower, term, candidate, candidate_last_transaction)
 
-      assert follower.voted_for == :node_1
+      assert follower.voted_for == :peer_1
     end
   end
 
@@ -78,12 +78,12 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       log = InMemoryLog.new()
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
-      follower = Follower.new(term, log, MockInterface)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
 
       prev_transaction_id = {0, 0}
       transactions = [{{2, 1}, "another_tx"}]
       commit_transaction_id = {2, 1}
-      leader = :node_1
+      leader = :peer_1
 
       assert :become_follower =
                Follower.append_entries_received(
@@ -101,12 +101,12 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       log = InMemoryLog.new()
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
-      follower = Follower.new(term, log, MockInterface)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
 
       prev_transaction_id = :some_tx_id
       transactions = []
       commit_transaction_id = :another_tx_id
-      leader = :node_1
+      leader = :peer_1
 
       {:ok, follower} =
         Follower.append_entries_received(

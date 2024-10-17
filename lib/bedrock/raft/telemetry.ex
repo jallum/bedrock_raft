@@ -1,36 +1,43 @@
 defmodule Bedrock.Raft.Telemetry do
-  def track_became_follower(follower) do
+  alias Bedrock.Raft
+
+  @spec track_became_follower(Raft.election_term(), Raft.peer()) :: :ok
+  def track_became_follower(term, leader) do
     :telemetry.execute([:bedrock, :raft, :mode_change], %{at: now()}, %{
       mode: :follower,
-      term: follower.term,
-      leader: follower.leader
+      term: term,
+      leader: leader
     })
   end
 
-  def track_became_candidate(candidate) do
+  @spec track_became_candidate(Raft.election_term(), Raft.quorum(), [Raft.peer()]) :: :ok
+  def track_became_candidate(term, quorum, peers) do
     :telemetry.execute([:bedrock, :raft, :mode_change], %{at: now()}, %{
       mode: :candidate,
-      term: candidate.term,
-      quorum: candidate.quorum,
-      nodes: candidate.nodes
+      term: term,
+      quorum: quorum,
+      peers: peers
     })
   end
 
-  def track_became_leader(leader) do
+  @spec track_became_leader(Raft.election_term(), Raft.quorum(), Raft.peer()) :: :ok
+  def track_became_leader(term, quorum, peers) do
     :telemetry.execute([:bedrock, :raft, :mode_change], %{at: now()}, %{
       mode: :leader,
-      term: leader.term,
-      quorum: leader.quorum,
-      nodes: leader.nodes
+      term: term,
+      quorum: quorum,
+      peers: peers
     })
   end
 
+  @spec track_consensus_reached(Raft.transaction_id()) :: :ok
   def track_consensus_reached(transaction_id) do
     :telemetry.execute([:bedrock, :raft, :consensus_reached], %{at: now()}, %{
       transaction_id: transaction_id
     })
   end
 
+  @spec track_leadership_change(Raft.peer(), Raft.election_term()) :: :ok
   def track_leadership_change(leader, term) do
     :telemetry.execute([:bedrock, :raft, :leadership_change], %{at: now()}, %{
       leader: leader,
@@ -38,21 +45,24 @@ defmodule Bedrock.Raft.Telemetry do
     })
   end
 
-  def track_request_votes(term, nodes, newest_transaction_id) do
+  @spec track_request_votes(Raft.election_term(), [Raft.peer()], Raft.transaction_id()) :: :ok
+  def track_request_votes(term, peers, newest_transaction_id) do
     :telemetry.execute([:bedrock, :raft, :request_votes], %{at: now()}, %{
       term: term,
-      nodes: nodes,
+      peers: peers,
       newest_transaction_id: newest_transaction_id
     })
   end
 
-  def track_vote_received(term, node) do
+  @spec track_vote_received(Raft.election_term(), follower :: Raft.peer()) :: :ok
+  def track_vote_received(term, follower) do
     :telemetry.execute([:bedrock, :raft, :vote_received], %{at: now()}, %{
       term: term,
-      node: node
+      follower: follower
     })
   end
 
+  @spec track_vote_sent(Raft.election_term(), candidate :: Raft.peer()) :: :ok
   def track_vote_sent(term, candidate) do
     :telemetry.execute([:bedrock, :raft, :vote_sent], %{at: now()}, %{
       term: term,
@@ -60,6 +70,7 @@ defmodule Bedrock.Raft.Telemetry do
     })
   end
 
+  @spec track_election_ended(Raft.election_term(), non_neg_integer(), non_neg_integer()) :: :ok
   def track_election_ended(term, votes, quorum) do
     :telemetry.execute([:bedrock, :raft, :election_ended], %{at: now()}, %{
       term: term,
@@ -68,6 +79,7 @@ defmodule Bedrock.Raft.Telemetry do
     })
   end
 
+  @spec track_transaction_added(Raft.election_term(), Raft.transaction_id()) :: :ok
   def track_transaction_added(term, transaction_id) do
     :telemetry.execute([:bedrock, :raft, :transaction_added], %{at: now()}, %{
       term: term,
@@ -75,6 +87,21 @@ defmodule Bedrock.Raft.Telemetry do
     })
   end
 
+  @spec track_append_entries_ack_sent(Raft.election_term(), Raft.peer(), Raft.transaction_id()) ::
+          :ok
+  def track_append_entries_ack_sent(term, follower, newest_transaction_id) do
+    :telemetry.execute([:bedrock, :raft, :append_entries_ack_received], %{at: now()}, %{
+      term: term,
+      follower: follower,
+      newest_transaction_id: newest_transaction_id
+    })
+  end
+
+  @spec track_append_entries_ack_received(
+          Raft.election_term(),
+          Raft.peer(),
+          Raft.transaction_id()
+        ) :: :ok
   def track_append_entries_ack_received(term, follower, newest_transaction_id) do
     :telemetry.execute([:bedrock, :raft, :append_entries_ack_received], %{at: now()}, %{
       term: term,
@@ -83,15 +110,23 @@ defmodule Bedrock.Raft.Telemetry do
     })
   end
 
+  @spec track_heartbeat(Raft.election_term()) :: :ok
   def track_heartbeat(term) do
     :telemetry.execute([:bedrock, :raft, :heartbeat], %{at: now()}, %{
       term: term
     })
   end
 
+  @spec track_append_entries_sent(
+          Raft.election_term(),
+          leader :: Raft.peer(),
+          prev_transaction_id :: Raft.transaction_id(),
+          [Raft.transaction()],
+          commit_transaction_id :: Raft.transaction_id()
+        ) :: :ok
   def track_append_entries_sent(
-        follower,
         term,
+        follower,
         prev_transaction_id,
         transaction_ids,
         newest_safe_transaction_id
@@ -105,21 +140,28 @@ defmodule Bedrock.Raft.Telemetry do
     })
   end
 
+  @spec track_append_entries_received(
+          Raft.election_term(),
+          leader :: Raft.peer(),
+          prev_transaction_id :: Raft.transaction_id(),
+          [Raft.transaction()],
+          commit_transaction_id :: Raft.transaction_id()
+        ) :: :ok
   def track_append_entries_received(
         term,
-        follower,
+        leader,
         prev_transaction_id,
         transaction_ids,
         commit_transaction_id
       ) do
     :telemetry.execute([:bedrock, :raft, :append_entries_received], %{at: now()}, %{
       term: term,
-      follower: follower,
+      leader: leader,
       prev_transaction_id: prev_transaction_id,
       transaction_ids: transaction_ids,
       commit_transaction_id: commit_transaction_id
     })
   end
 
-  def now, do: :os.system_time(:millisecond)
+  defp now, do: :os.system_time(:millisecond)
 end
