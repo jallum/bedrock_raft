@@ -53,8 +53,8 @@ defmodule Bedrock.Raft.Telemetry do
     })
   end
 
-  def track_vote(term, candidate) do
-    :telemetry.execute([:bedrock, :raft, :vote], %{at: now()}, %{
+  def track_vote_sent(term, candidate) do
+    :telemetry.execute([:bedrock, :raft, :vote_sent], %{at: now()}, %{
       term: term,
       candidate: candidate
     })

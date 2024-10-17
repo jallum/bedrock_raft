@@ -38,7 +38,7 @@ defmodule Bedrock.Raft.Mode.Follower do
     only: [
       track_leadership_change: 2,
       track_consensus_reached: 1,
-      track_vote: 2,
+      track_vote_sent: 2,
       track_append_entries_received: 5
     ]
 
@@ -270,7 +270,7 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   @spec vote_for(t(), Raft.service(), Raft.election_term()) :: t()
   defp vote_for(t, candidate, term) do
-    track_vote(candidate, term)
+    track_vote_sent(candidate, term)
     apply(t.interface, :send_event, [candidate, {:vote, term}])
     %{t | voted_for: candidate, term: term}
   end
