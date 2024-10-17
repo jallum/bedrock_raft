@@ -166,7 +166,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
           newest_transaction_id :: Raft.transaction_id(),
           follower :: Raft.service()
         ) :: {:ok, any()} | :become_follower
-  def append_entries_ack_received(t, term, _, _) when term > t.term, do: become_follower(t)
+  def append_entries_ack_received(t, term, _, _) when term >= t.term, do: become_follower(t)
   def append_entries_ack_received(t, _, _, _), do: {:ok, t}
 
   @doc """
@@ -184,7 +184,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
           from :: Raft.service()
         ) ::
           {:ok, t()} | :become_follower
-  def append_entries_received(t, term, _, _, _, _) when term > t.term, do: become_follower(t)
+  def append_entries_received(t, term, _, _, _, _) when term >= t.term, do: become_follower(t)
   def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
 
   @impl true

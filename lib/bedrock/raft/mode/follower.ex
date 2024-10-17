@@ -112,7 +112,7 @@ defmodule Bedrock.Raft.Mode.Follower do
   @impl true
   @spec vote_received(t(), Raft.election_term(), follower :: Raft.service()) ::
           :become_follower | {:ok, t()}
-  def vote_received(t, term, _) when term > t.term, do: become_follower(t)
+  def vote_received(t, term, _) when term >= t.term, do: become_follower(t)
   def vote_received(t, _, _), do: {:ok, t}
 
   @doc """
@@ -135,7 +135,7 @@ defmodule Bedrock.Raft.Mode.Follower do
           newest_transaction_id :: Raft.transaction_id(),
           follower :: Raft.service()
         ) :: {:ok, t()} | :become_follower
-  def append_entries_ack_received(t, term, _, _) when term > t.term, do: t |> become_follower()
+  def append_entries_ack_received(t, term, _, _) when term >= t.term, do: t |> become_follower()
   def append_entries_ack_received(t, _, _, _), do: {:ok, t}
 
   @doc """
