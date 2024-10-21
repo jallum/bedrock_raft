@@ -174,6 +174,7 @@ defmodule Bedrock.Raft do
     mode.timer_ticked(t.mode, name)
     |> case do
       :become_candidate -> t |> become_candidate(next_term(t), log(t))
+      :become_follower -> t |> become_follower(:undecided, term(t), log(t))
       {:ok, mode} -> %{t | mode: mode}
     end
   end
@@ -257,10 +258,10 @@ defmodule Bedrock.Raft do
 
   @spec notify_change_in_leadership(t(), old_leader :: Raft.peer()) :: t()
   defp notify_change_in_leadership(t, old_leader) do
-    current_leader = t |> leader()
+    current_leader = leader(t)
 
     if current_leader != old_leader do
-      current_term = t |> term()
+      current_term = term(t)
       apply(t.interface, :leadership_changed, [{current_leader, current_term}])
       track_leadership_change(current_leader, current_term)
     end

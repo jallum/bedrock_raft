@@ -236,11 +236,28 @@ defmodule Bedrock.Raft.Mode.Leader do
       t.follower_tracking
       |> FollowerTracking.followers_not_seen_in(t.interface.heartbeat_ms())
     )
-    |> reset_timer()
-    |> then(&{:ok, &1})
+    |> then(fn t ->
+      if active_followers(t) < t.quorum do
+        t |> become_follower()
+      else
+        t
+        |> reset_timer()
+        |> then(&{:ok, &1})
+      end
+    end)
   end
 
   def timer_ticked(t, _), do: {:ok, t}
+
+  @spec active_followers(t()) :: non_neg_integer()
+  defp active_followers(t) do
+    length(t.peers)
+    |> Kernel.-(
+      t.follower_tracking
+      |> FollowerTracking.followers_not_seen_in(t.interface.heartbeat_ms() * 5)
+      |> length()
+    )
+  end
 
   @spec send_append_entries_to_followers(t(), peers :: [Raft.peer()]) :: t()
   defp send_append_entries_to_followers(t, peers) do
