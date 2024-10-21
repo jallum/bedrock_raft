@@ -73,27 +73,27 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
   end
 
   describe "append_entries_received/6" do
-    test "cancels timer and elects new leader when leader's term is greater" do
+    test "resets timer and acks the new leader when leader's term is greater" do
       term = 1
       log = InMemoryLog.new()
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
-      follower = Follower.new(term, log, MockInterface, :peer_0)
+      p = Follower.new(term, log, MockInterface, :peer_0)
 
-      prev_transaction_id = {0, 0}
+      t0 = {0, 0}
       transactions = [{{2, 1}, "another_tx"}]
-      commit_transaction_id = {2, 1}
+      t1 = {2, 1}
       leader = :peer_1
 
-      assert :become_follower =
-               Follower.append_entries_received(
-                 follower,
-                 2,
-                 prev_transaction_id,
-                 transactions,
-                 commit_transaction_id,
-                 leader
-               )
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {^leader, 2} -> :ok end)
+      expect(MockInterface, :send_event, fn :peer_1, {:append_entries_ack, 2, ^t1} -> :ok end)
+      expect(MockInterface, :consensus_reached, fn _, ^t1 -> :ok end)
+
+      {:ok, p} = Follower.append_entries_received(p, 2, t0, transactions, t1, leader)
+
+      assert ^leader = p.leader
+      assert 2 = p.term
     end
 
     test "ignores append entries with a lower term" do

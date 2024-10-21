@@ -71,8 +71,13 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLog do
     def initial_transaction_id(_t), do: @initial_transaction_id
 
     @impl true
-    def commit_up_to(t, transaction_id) when is_binary(transaction_id),
-      do: {:ok, %{t | last_commit: transaction_id}}
+    def commit_up_to(_t, @initial_transaction_id), do: :unchanged
+
+    def commit_up_to(t, transaction_id)
+        when is_binary(transaction_id) and transaction_id > t.last_commit,
+        do: {:ok, %{t | last_commit: transaction_id}}
+
+    def commit_up_to(_t, _transaction_id), do: :unchanged
 
     @impl true
     def newest_transaction_id(t) do

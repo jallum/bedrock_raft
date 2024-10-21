@@ -78,10 +78,6 @@ defmodule Bedrock.Raft.Mode.Follower do
       interface: interface
     }
     |> set_timer()
-    |> case do
-      %{leader: :undecided} = t -> t
-      t -> t |> send_append_entries_ack()
-    end
   end
 
   @doc """
@@ -158,7 +154,11 @@ defmodule Bedrock.Raft.Mode.Follower do
           commit_transaction_id :: Raft.transaction_id(),
           from :: Raft.peer()
         ) ::
-          {:ok, t()} | :become_follower
+          {:ok, t()}
+  def append_entries_received(t, term, _, _, _, from)
+      when term > t.term and t.from not in [:undecided, from],
+      do: {:ok, t}
+
   def append_entries_received(
         t,
         term,
@@ -167,7 +167,7 @@ defmodule Bedrock.Raft.Mode.Follower do
         commit_transaction_id,
         from
       )
-      when term == t.term and t.leader in [:undecided, from] do
+      when term >= t.term do
     track_append_entries_received(
       term,
       from,
@@ -178,14 +178,13 @@ defmodule Bedrock.Raft.Mode.Follower do
 
     t
     |> reset_timer()
-    |> note_change_in_leadership_if_necessary(from)
+    |> note_change_in_leadership_if_necessary(from, term)
     |> try_to_append_transactions(prev_transaction_id, transactions)
     |> try_to_reach_consensus(min(Log.newest_transaction_id(t.log), commit_transaction_id))
     |> send_append_entries_ack()
     |> then(&{:ok, &1})
   end
 
-  def append_entries_received(t, term, _, _, _, _) when term > t.term, do: t |> become_follower()
   def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
 
   @impl true
@@ -235,22 +234,25 @@ defmodule Bedrock.Raft.Mode.Follower do
   defp skip_transactions_already_in_log(prev_txn_id, transactions, _newest_txn_id),
     do: {prev_txn_id, transactions}
 
-  defp note_change_in_leadership_if_necessary(t, leader) when t.leader == :undecided do
-    track_leadership_change(leader, t.term)
-    apply(t.interface, :leadership_changed, [{leader, t.term}])
-    %{t | leader: leader}
+  defp note_change_in_leadership_if_necessary(t, leader, term)
+       when t.leader == :undecided or term > t.term do
+    track_leadership_change(leader, term)
+    apply(t.interface, :leadership_changed, [{leader, term}])
+    %{t | leader: leader, term: term}
   end
 
-  defp note_change_in_leadership_if_necessary(t, _), do: t
+  defp note_change_in_leadership_if_necessary(t, _, _), do: t
 
   defp try_to_reach_consensus(t, transaction_id) do
-    if transaction_id > Log.newest_safe_transaction_id(t.log) do
-      track_consensus_reached(transaction_id)
-      {:ok, log} = Log.commit_up_to(t.log, transaction_id)
-      :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
-      %{t | log: log}
-    else
-      t
+    Log.commit_up_to(t.log, transaction_id)
+    |> case do
+      {:ok, log} ->
+        track_consensus_reached(transaction_id)
+        :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
+        %{t | log: log}
+
+      :unchanged ->
+        t
     end
   end
 

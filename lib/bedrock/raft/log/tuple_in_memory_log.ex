@@ -6,7 +6,6 @@ defmodule Bedrock.Raft.Log.TupleInMemoryLog do
   :ordered_set option, which maintains transactions in the order they were
   inserted.
   """
-
   alias Bedrock.Raft
   alias Bedrock.Raft.TransactionID
 
@@ -72,8 +71,13 @@ defmodule Bedrock.Raft.Log.TupleInMemoryLog do
     def initial_transaction_id(_t), do: @initial_transaction_id
 
     @impl true
-    def commit_up_to(t, transaction_id) when is_tuple(transaction_id),
-      do: {:ok, %{t | last_commit: transaction_id}}
+    def commit_up_to(_t, @initial_transaction_id), do: :unchanged
+
+    def commit_up_to(t, transaction_id)
+        when is_tuple(transaction_id) and transaction_id > t.last_commit,
+        do: {:ok, %{t | last_commit: transaction_id}}
+
+    def commit_up_to(_t, _transaction_id), do: :unchanged
 
     @impl true
     def newest_transaction_id(t) do
@@ -137,8 +141,7 @@ defmodule Bedrock.Raft.Log.TupleInMemoryLog do
         when is_tuple(transaction_id),
         do: transaction
 
-    def normalize_transaction(_t, {transaction_id, data})
-        when is_binary(transaction_id),
-        do: {transaction_id |> TransactionID.decode(), data}
+    def normalize_transaction(_t, {transaction_id, data}) when is_binary(transaction_id),
+      do: {transaction_id |> TransactionID.decode(), data}
   end
 end

@@ -198,7 +198,7 @@ defmodule Bedrock.Raft do
 
   def handle_event(
         %{mode: %mode{}} = t,
-        {:append_entries, term, prev_transaction_id, transactions, commit_transaction_id},
+        {:append_entries, term, prev_transaction_id, transactions, commit_transaction_id} = event,
         from
       ) do
     mode.append_entries_received(
@@ -210,16 +210,22 @@ defmodule Bedrock.Raft do
       from
     )
     |> case do
-      :become_follower -> t |> become_follower(from, term, log(t))
-      {:ok, mode} -> %{t | mode: mode}
+      :become_follower ->
+        t |> become_follower(from, term, log(t)) |> handle_event(event, from)
+
+      {:ok, mode} ->
+        %{t | mode: mode}
     end
   end
 
   def handle_event(%{mode: %mode{}} = t, {:append_entries_ack, term, newest_transaction}, from) do
     mode.append_entries_ack_received(t.mode, term, newest_transaction, from)
     |> case do
-      :become_follower -> t |> become_follower(from, term, log(t))
-      {:ok, mode} -> %{t | mode: mode}
+      :become_follower ->
+        t |> become_follower(from, term, log(t))
+
+      {:ok, mode} ->
+        %{t | mode: mode}
     end
   end
 
