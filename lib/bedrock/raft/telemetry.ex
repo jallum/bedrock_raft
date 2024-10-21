@@ -1,6 +1,14 @@
 defmodule Bedrock.Raft.Telemetry do
   alias Bedrock.Raft
 
+  @spec track_ignored_event(event :: term(), from :: Raft.peer()) :: :ok
+  def track_ignored_event(event, from) do
+    :telemetry.execute([:bedrock, :raft, :ignored_event], %{at: now()}, %{
+      event: event,
+      from: from
+    })
+  end
+
   @spec track_became_follower(Raft.election_term(), Raft.peer()) :: :ok
   def track_became_follower(term, leader) do
     :telemetry.execute([:bedrock, :raft, :mode_change], %{at: now()}, %{
@@ -20,7 +28,7 @@ defmodule Bedrock.Raft.Telemetry do
     })
   end
 
-  @spec track_became_leader(Raft.election_term(), Raft.quorum(), Raft.peer()) :: :ok
+  @spec track_became_leader(Raft.election_term(), Raft.quorum(), [Raft.peer()]) :: :ok
   def track_became_leader(term, quorum, peers) do
     :telemetry.execute([:bedrock, :raft, :mode_change], %{at: now()}, %{
       mode: :leader,

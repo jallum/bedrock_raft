@@ -36,7 +36,8 @@ defmodule Bedrock.Raft do
       track_became_follower: 2,
       track_became_candidate: 3,
       track_became_leader: 3,
-      track_leadership_change: 2
+      track_leadership_change: 2,
+      track_ignored_event: 2
     ]
 
   @type t :: %__MODULE__{
@@ -221,35 +222,30 @@ defmodule Bedrock.Raft do
     end
   end
 
-  # def handle_event(t, event, from) do
-  #   apply(t.interface, :ignored_event, [event, from])
-  #   t
-  # end
+  def handle_event(t, event, from) do
+    track_ignored_event(event, from)
+    apply(t.interface, :ignored_event, [event, from])
+    t
+  end
 
   defp become_candidate(t, term, log) do
-    Candidate.new(term, t.quorum, t.peers, log, t.interface)
-    |> then(fn c ->
-      track_became_candidate(term, c.quorum, c.peers)
-      %{t | mode: c}
-    end)
+    track_became_candidate(term, t.quorum, t.peers)
+
+    %{t | mode: Candidate.new(term, t.quorum, t.peers, log, t.interface)}
     |> notify_change_in_leadership(leader(t))
   end
 
   defp become_follower(t, leader, term, log) do
-    Follower.new(term, log, t.interface, t.me, leader)
-    |> then(fn f ->
-      track_became_follower(term, leader)
-      %{t | mode: f}
-    end)
+    track_became_follower(term, leader)
+
+    %{t | mode: Follower.new(term, log, t.interface, t.me, leader)}
     |> notify_change_in_leadership(leader(t))
   end
 
   defp become_leader(t, term, log) do
-    Leader.new(term, t.quorum, t.peers, log, t.interface)
-    |> then(fn l ->
-      track_became_leader(term, l.quorum, l.peers)
-      %{t | mode: l}
-    end)
+    track_became_leader(term, t.quorum, t.peers)
+
+    %{t | mode: Leader.new(term, t.quorum, t.peers, log, t.interface)}
     |> notify_change_in_leadership(leader(t))
   end
 
