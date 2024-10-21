@@ -12,13 +12,51 @@ defmodule Bedrock.RaftTest do
   import Mox
   alias Bedrock.Raft.MockInterface
 
-  setup [:verify_on_exit!, :fix_stubs]
+  setup [:verify_on_exit!, :fix_stubs, :start_clock]
 
   def mock_timer_cancel, do: :ok
 
+  defmodule Clock do
+    use Agent
+
+    # Starts the agent with the current system time or a custom initial time
+    def start_link(opts) do
+      initial_time = opts[:initial_time] || 1000
+
+      Agent.start_link(fn -> %{initial_time: initial_time, clocks: %{}} end,
+        name: opts[:name] || __MODULE__
+      )
+    end
+
+    # Gets the current time from the agent
+    def timestamp_in_ms(clock), do: Agent.get(__MODULE__, &(&1.clocks[clock] || &1.initial_time))
+
+    # Advances the time by the given amount (e.g., milliseconds)
+    def advance_time(clock, milliseconds) do
+      Agent.update(
+        __MODULE__,
+        &update_in(&1, [:clocks, clock], fn time -> (time || &1.initial_time) + milliseconds end)
+      )
+    end
+  end
+
   def fix_stubs(context) do
-    stub(MockInterface, :heartbeat_ms, fn -> 0 end)
+    stub(MockInterface, :heartbeat_ms, fn -> 50 end)
     {:ok, context}
+  end
+
+  def start_clock(context) do
+    start_supervised!(Clock)
+    clock_name = :crypto.strong_rand_bytes(3) |> Base.encode32(padding: false)
+    stub(MockInterface, :timestamp_in_ms, fn -> Clock.timestamp_in_ms(clock_name) end)
+    advance_time = &Clock.advance_time(clock_name, &1)
+
+    {:ok,
+     context
+     |> Map.merge(%{
+       clock_name: clock_name,
+       advance_time: advance_time
+     })}
   end
 
   describe "Raft can be constructed" do
@@ -97,7 +135,9 @@ defmodule Bedrock.RaftTest do
   end
 
   describe "Raft elections" do
-    test "A happy-path election between three peers that we started" do
+    test "A happy-path election between three peers that we started", %{
+      advance_time: advance_time
+    } do
       t0 = {0, 0}
 
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
@@ -201,6 +241,9 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
+
+      # Bounce the clock ahead 51ms
+      advance_time.(51)
 
       p = Raft.handle_event(p, :heartbeat, :timer)
 
@@ -435,8 +478,6 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
-      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
 
       p =
         Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
@@ -479,8 +520,6 @@ defmodule Bedrock.RaftTest do
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
-      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
 
       p =
         Raft.new(:a, [:b, :c], log, MockInterface)
@@ -537,7 +576,9 @@ defmodule Bedrock.RaftTest do
   end
 
   describe "Raft quorum failures" do
-    test "A three peer cluster where we are the leader, and quorum fails" do
+    test "A three peer cluster where we are the leader, and quorum fails", %{
+      advance_time: advance_time
+    } do
       log = InMemoryLog.new()
 
       t0 = Log.initial_transaction_id(log)
@@ -575,6 +616,7 @@ defmodule Bedrock.RaftTest do
       assert {:a, 1} = Raft.leadership(p)
 
       # some time goes by, and we don't hear back from either :b or :c...
+      advance_time.(50)
 
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
@@ -585,6 +627,7 @@ defmodule Bedrock.RaftTest do
       verify!()
 
       # some time goes by, and we don't hear back from either :b or :c...
+      advance_time.(50)
 
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
@@ -595,39 +638,38 @@ defmodule Bedrock.RaftTest do
       verify!()
 
       # some time goes by, and we don't hear back from either :b or :c...
+      advance_time.(50)
 
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
+
+      # Bounce the clock ahead 50ms
+      advance_time.(50)
 
       p = p |> Raft.handle_event(:heartbeat, :timer)
 
       verify!()
 
-      # some time goes by, and we don't hear back from either :b or :c...
+      # some time goes by, and we don't hear back from either :b or :c... and
+      # then we drop back to being a follower.
+      advance_time.(50)
 
-      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
-      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:undecided, 1} -> :ok end)
 
       p = p |> Raft.handle_event(:heartbeat, :timer)
 
       verify!()
 
-      # some time goes by, and we don't hear back from either :b or :c...
-
-      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
-      expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
-
-      _p = p |> Raft.handle_event(:heartbeat, :timer)
-
-      verify!()
+      refute p |> Raft.am_i_the_leader?()
     end
   end
 
   describe "Raft log interaction" do
-    test "A three peer cluster where we become the leader, and then we append an entry" do
+    test "A three peer cluster where we become the leader, and then we append an entry", %{
+      advance_time: advance_time
+    } do
       log = InMemoryLog.new()
 
       t0 = Log.initial_transaction_id(log)
@@ -709,6 +751,9 @@ defmodule Bedrock.RaftTest do
 
       # Our heartbeat timer expires, and we send out a heartbeat to :b and :c.
       # We note that the newest committed transaction is still t0
+
+      # Bounce the clock ahead 51ms
+      advance_time.(51)
 
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
 

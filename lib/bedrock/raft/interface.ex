@@ -20,6 +20,8 @@ defmodule Bedrock.Raft.Interface do
 
   @callback heartbeat_ms() :: non_neg_integer()
 
+  @callback timestamp_in_ms() :: non_neg_integer()
+
   @doc """
   An unhandled event has occurred.
   """

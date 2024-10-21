@@ -112,7 +112,8 @@ defmodule Bedrock.Raft.Mode.Leader do
       id_sequence: 0,
       follower_tracking:
         FollowerTracking.new(peers,
-          initial_transaction_id: Log.newest_safe_transaction_id(log)
+          initial_transaction_id: Log.newest_safe_transaction_id(log),
+          timestamp_fn: &interface.timestamp_in_ms/0
         ),
       log: log,
       interface: interface
@@ -231,20 +232,16 @@ defmodule Bedrock.Raft.Mode.Leader do
   def timer_ticked(t, :heartbeat) do
     track_heartbeat(t.term)
 
-    t
-    |> send_append_entries_to_followers(
-      t.follower_tracking
-      |> FollowerTracking.followers_not_seen_in(t.interface.heartbeat_ms())
-    )
-    |> then(fn t ->
-      if active_followers(t) < t.quorum do
-        t |> become_follower()
-      else
-        t
-        |> reset_timer()
-        |> then(&{:ok, &1})
-      end
-    end)
+    if active_followers(t) < t.quorum do
+      t |> become_follower()
+    else
+      t
+      |> send_append_entries_to_followers(
+        FollowerTracking.followers_not_seen_in(t.follower_tracking, t.interface.heartbeat_ms())
+      )
+      |> reset_timer()
+      |> then(&{:ok, &1})
+    end
   end
 
   def timer_ticked(t, _), do: {:ok, t}

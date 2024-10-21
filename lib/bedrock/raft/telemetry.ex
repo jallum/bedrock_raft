@@ -97,10 +97,10 @@ defmodule Bedrock.Raft.Telemetry do
 
   @spec track_append_entries_ack_sent(Raft.election_term(), Raft.peer(), Raft.transaction_id()) ::
           :ok
-  def track_append_entries_ack_sent(term, follower, newest_transaction_id) do
-    :telemetry.execute([:bedrock, :raft, :append_entries_ack_received], %{at: now()}, %{
+  def track_append_entries_ack_sent(term, leader, newest_transaction_id) do
+    :telemetry.execute([:bedrock, :raft, :append_entries_ack_sent], %{at: now()}, %{
       term: term,
-      follower: follower,
+      leader: leader,
       newest_transaction_id: newest_transaction_id
     })
   end
