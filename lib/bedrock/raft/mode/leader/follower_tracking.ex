@@ -70,7 +70,7 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
     since = timestamp(t) - n_milliseconds
 
     t.table
-    |> :ets.select([{{:"$1", :_, :_, :"$4"}, [{:>=, since, :"$4"}], [:"$1"]}])
+    |> :ets.select([{{:"$1", :_, :_, :"$4"}, [{:>, since, :"$4"}], [:"$1"]}])
   end
 
   @doc """

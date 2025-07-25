@@ -101,6 +101,24 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTrackingTest do
     assert [] = FollowerTracking.followers_not_seen_in(t, 55) |> Enum.sort()
   end
 
+  test "newly initialized followers should not be considered not seen", %{t: t} do
+    # Immediately after initialization (same timestamp), no followers should be "not seen"
+    expect(MockTimer, :timestamp, fn -> 1000 end)
+    assert [] = FollowerTracking.followers_not_seen_in(t, 0) |> Enum.sort()
+
+    # A few milliseconds later, if we check within the timeframe, no followers should be "not seen"
+    expect(MockTimer, :timestamp, fn -> 1025 end)
+    assert [] = FollowerTracking.followers_not_seen_in(t, 30) |> Enum.sort()
+
+    # But if we check with a shorter timeframe, they should be "not seen"
+    expect(MockTimer, :timestamp, fn -> 1025 end)
+    assert [:f1, :f2, :f3] = FollowerTracking.followers_not_seen_in(t, 20) |> Enum.sort()
+
+    # After heartbeat_ms * 5 (typically 250ms), followers should be "not seen"
+    expect(MockTimer, :timestamp, fn -> 1300 end)
+    assert [:f1, :f2, :f3] = FollowerTracking.followers_not_seen_in(t, 250) |> Enum.sort()
+  end
+
   test "newest_safe_transaction_id/2 handles edge cases safely", %{t: t} do
     # Test with quorum = 0 (single peer cluster)
     expect(MockTimer, :timestamp, fn -> 2000 end)

@@ -487,7 +487,7 @@ defmodule Bedrock.RaftTest do
 
       verify!()
 
-      advance_time.(50)
+      advance_time.(51)
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
@@ -619,7 +619,7 @@ defmodule Bedrock.RaftTest do
       assert {:a, 1} = Raft.leadership(p)
 
       # some time goes by, and we don't hear back from either :b or :c...
-      advance_time.(50)
+      advance_time.(51)
 
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)
@@ -708,7 +708,7 @@ defmodule Bedrock.RaftTest do
 
       # Some time goes by, and we don't hear back from either :b or :c. Our
       # heartbeat timer expires, and we send out a heartbeat to :b and :c.
-      advance_time.(50)
+      advance_time.(51)
 
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t0, [], ^t0} -> :ok end)

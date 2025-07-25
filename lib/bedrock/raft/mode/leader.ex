@@ -294,12 +294,11 @@ defmodule Bedrock.Raft.Mode.Leader do
 
   @spec active_followers(t()) :: non_neg_integer()
   defp active_followers(t) do
-    length(t.peers)
-    |> Kernel.-(
+    not_seen =
       t.follower_tracking
       |> FollowerTracking.followers_not_seen_in(t.interface.heartbeat_ms() * 5)
-      |> length()
-    )
+
+    length(t.peers) - length(not_seen)
   end
 
   @spec send_append_entries_to_followers(t(), peers :: [Raft.peer()]) :: t()
