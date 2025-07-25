@@ -270,7 +270,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     track_heartbeat(t.term)
 
     active_followers = active_followers(t)
-    
+
     if active_followers < t.quorum do
       case apply(t.interface, :quorum_lost, [active_followers, length(t.peers), t.term]) do
         :step_down -> become_follower(t)

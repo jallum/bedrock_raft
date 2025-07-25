@@ -654,7 +654,8 @@ defmodule Bedrock.RaftTest do
 
       verify!()
 
-      advance_time.(250)  # enough time for followers to be considered inactive
+      # enough time for followers to be considered inactive
+      advance_time.(250)
 
       expect(MockInterface, :quorum_lost, fn 0, 2, 1 -> :step_down end)
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
@@ -851,6 +852,81 @@ defmodule Bedrock.RaftTest do
       assert [{t1, :data1}, {t2, :data2}] == p |> Raft.log() |> Log.transactions_from(t0, :newest)
       assert t2 == p |> Raft.log() |> Log.newest_transaction_id()
       assert t2 == p |> Raft.log() |> Log.newest_safe_transaction_id()
+    end
+  end
+
+  describe "Error cases and edge paths" do
+    test "next_transaction_id returns error when not leader" do
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      p = Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
+
+      assert {:error, :not_leader} = Raft.next_transaction_id(p)
+    end
+
+    test "candidate votes for higher term request" do
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :send_event, 2, fn _, _ -> :ok end)
+
+      candidate =
+        Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
+        |> Raft.handle_event(:election, :timer)
+
+      expect(MockInterface, :send_event, fn :peer_d, {:vote, 2} -> :ok end)
+
+      p = Raft.handle_event(candidate, {:request_vote, 2, {1, 1}}, :peer_d)
+
+      assert %Raft{mode: %Candidate{term: 2, voted_for: :peer_d}} = p
+    end
+
+    test "candidate becomes follower on higher term vote" do
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :send_event, 2, fn _, _ -> :ok end)
+
+      candidate =
+        Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
+        |> Raft.handle_event(:election, :timer)
+
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+
+      p = Raft.handle_event(candidate, {:vote, 2}, :peer_d)
+
+      assert %Raft{mode: %Follower{term: 2}} = p
+    end
+
+    test "leader becomes follower on higher term ack" do
+      log = InMemoryLog.new()
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :send_event, 2, fn _, _ -> :ok end)
+
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
+
+      leader =
+        Raft.new(:a, [:b, :c], log, MockInterface)
+        |> Raft.handle_event(:election, :timer)
+        |> Raft.handle_event({:vote, 1}, :b)
+        |> Raft.handle_event({:vote, 1}, :c)
+
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:peer_d, 2} -> :ok end)
+
+      p = Raft.handle_event(leader, {:append_entries_ack, 2, {1, 1}}, :peer_d)
+
+      assert %Raft{mode: %Follower{term: 2, leader: :peer_d}} = p
+    end
+
+    test "unknown events are ignored" do
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
+      p = Raft.new(:a, [:b, :c], InMemoryLog.new(), MockInterface)
+
+      expect(MockInterface, :ignored_event, fn :unknown_event, :peer_x -> :ok end)
+
+      result = Raft.handle_event(p, :unknown_event, :peer_x)
+
+      assert result == p
     end
   end
 end

@@ -193,5 +193,63 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLogTest do
                transaction
              ]
     end
+
+    test "returns empty list when from transaction is not found", %{log: log} do
+      transaction_id = TransactionID.encode({0, 1})
+      transaction = {transaction_id, :some_data}
+
+      {:ok, updated_log} =
+        Log.append_transactions(log, TransactionID.encode({0, 0}), [transaction])
+
+      assert Log.transactions_from(updated_log, TransactionID.encode({1, 0}), :newest) == []
+    end
+  end
+
+  describe "purge_transactions_after/2" do
+    test "purges transactions after the given transaction ID", %{log: log} do
+      transaction_1_id = TransactionID.encode({0, 1})
+      transaction_1 = {transaction_1_id, :data_1}
+      transaction_2_id = TransactionID.encode({0, 2})
+      transaction_2 = {transaction_2_id, :data_2}
+
+      {:ok, log} = Log.append_transactions(log, TransactionID.encode({0, 0}), [transaction_1])
+      {:ok, log} = Log.append_transactions(log, transaction_1_id, [transaction_2])
+      {:ok, log} = Log.commit_up_to(log, transaction_2_id)
+
+      {:ok, purged_log} = Log.purge_transactions_after(log, transaction_1_id)
+
+      assert !Log.has_transaction_id?(purged_log, transaction_2_id)
+      assert Log.has_transaction_id?(purged_log, transaction_1_id)
+      assert purged_log.last_commit == transaction_1_id
+    end
+  end
+
+  describe "commit_up_to/2 edge cases" do
+    test "returns :unchanged when committing to initial transaction ID", %{log: log} do
+      assert Log.commit_up_to(log, TransactionID.encode({0, 0})) == :unchanged
+    end
+
+    test "returns :unchanged when transaction ID is not newer than last commit", %{log: log} do
+      transaction_id = TransactionID.encode({0, 1})
+      transaction = {transaction_id, :some_data}
+
+      {:ok, log} = Log.append_transactions(log, TransactionID.encode({0, 0}), [transaction])
+      {:ok, committed_log} = Log.commit_up_to(log, transaction_id)
+
+      assert Log.commit_up_to(committed_log, transaction_id) == :unchanged
+    end
+  end
+
+  describe "append_transactions/3 with tuple transaction IDs" do
+    test "accepts transactions with tuple transaction IDs", %{log: log} do
+      transaction = {{0, 1}, :some_data}
+
+      {:ok, updated_log} =
+        Log.append_transactions(log, TransactionID.encode({0, 0}), [transaction])
+
+      expected_id = TransactionID.encode({0, 1})
+      assert Log.has_transaction_id?(updated_log, expected_id)
+      assert Log.transactions_to(updated_log, :newest) == [{expected_id, :some_data}]
+    end
   end
 end

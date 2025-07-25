@@ -84,7 +84,8 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
       expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
       candidate_with_log = Candidate.new(1, 1, [:b, :c], log_with_data, MockInterface)
 
-      candidate_txn_id = {1, 5}  # older term despite higher index
+      # older term despite higher index
+      candidate_txn_id = {1, 5}
 
       {:ok, updated_candidate} =
         Candidate.vote_requested(candidate_with_log, 1, :peer_1, candidate_txn_id)
@@ -100,7 +101,8 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
       expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
       candidate_with_log = Candidate.new(1, 1, [:b, :c], log_with_data, MockInterface)
 
-      candidate_txn_id = {2, 3}  # same term, lower index
+      # same term, lower index
+      candidate_txn_id = {2, 3}
 
       {:ok, updated_candidate} =
         Candidate.vote_requested(candidate_with_log, 1, :peer_1, candidate_txn_id)
@@ -130,6 +132,96 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
         Candidate.append_entries_received(candidate, 0, {0, 0}, [], {0, 0}, :b)
 
       assert updated_candidate == candidate
+    end
+  end
+
+  describe "add_transaction/2" do
+    test "returns error as candidates cannot add transactions", %{log: log} do
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate = Candidate.new(1, 1, [:b, :c], log, MockInterface)
+
+      assert {:error, :not_leader} = Candidate.add_transaction(candidate, "some_data")
+    end
+  end
+
+  describe "append_entries_ack_received/4" do
+    setup %{log: log} do
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate = Candidate.new(1, 1, [:b, :c], log, MockInterface)
+      {:ok, candidate: candidate}
+    end
+
+    test "becomes follower when term is higher", %{candidate: candidate} do
+      assert :become_follower =
+               Candidate.append_entries_ack_received(candidate, 2, {1, 1}, :peer_1)
+    end
+
+    test "ignores when term is lower", %{candidate: candidate} do
+      assert {:ok, _} = Candidate.append_entries_ack_received(candidate, 0, {1, 1}, :peer_1)
+    end
+  end
+
+  describe "timer_ticked/2" do
+    setup %{log: log} do
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate = Candidate.new(1, 1, [:b, :c], log, MockInterface)
+      {:ok, candidate: candidate}
+    end
+
+    test "restarts election on election timeout", %{candidate: candidate} do
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+
+      {:ok, updated_candidate} = Candidate.timer_ticked(candidate, :election)
+
+      assert updated_candidate.votes == []
+    end
+
+    test "ignores non-election timers", %{candidate: candidate} do
+      assert {:ok, _} = Candidate.timer_ticked(candidate, :heartbeat)
+    end
+  end
+
+  describe "vote handling edge cases" do
+    test "ignores duplicate votes from same peer", %{log: log} do
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate = Candidate.new(1, 2, [:b, :c], log, MockInterface)
+
+      {:ok, candidate_with_vote} = Candidate.vote_received(candidate, 1, :b)
+      assert candidate_with_vote.votes == [:b]
+
+      {:ok, candidate_with_duplicate} = Candidate.vote_received(candidate_with_vote, 1, :b)
+      assert candidate_with_duplicate.votes == [:b]
+    end
+
+    test "ignores votes with lower term", %{log: log} do
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate = Candidate.new(1, 2, [:b, :c], log, MockInterface)
+
+      {:ok, updated_candidate} = Candidate.vote_received(candidate, 0, :b)
+      assert updated_candidate.votes == []
+    end
+  end
+
+  describe "vote_requested when already voted" do
+    test "does not vote again when already voted for another candidate", %{log: log} do
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate = Candidate.new(1, 1, [:b, :c], log, MockInterface)
+
+      expect(MockInterface, :send_event, fn :peer_1, {:vote, 1} -> :ok end)
+      {:ok, candidate_with_vote} = Candidate.vote_requested(candidate, 1, :peer_1, {1, 1})
+      assert candidate_with_vote.voted_for == :peer_1
+
+      {:ok, candidate_unchanged} =
+        Candidate.vote_requested(candidate_with_vote, 1, :peer_2, {1, 2})
+
+      assert candidate_unchanged.voted_for == :peer_1
     end
   end
 end

@@ -105,18 +105,22 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
 
     test "delegates quorum loss decision to interface" do
       term = 2
-      quorum = 2  # Requires 2 followers to maintain quorum
+      # Requires 2 followers to maintain quorum
+      quorum = 2
       peers = [:peer_1, :peer_2]
       log = InMemoryLog.new()
 
       # Use different timestamps to simulate followers becoming inactive
-      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)  # initialization
+      # initialization
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
       expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
       leader = Leader.new(term, quorum, peers, log, MockInterface)
 
       # During timer tick, use a later timestamp to simulate long inactive period
-      expect(MockInterface, :timestamp_in_ms, fn -> 2000 end)  # 1000ms later
-      expect(MockInterface, :heartbeat_ms, fn -> 50 end)  # check for followers not seen in 50ms
+      # 1000ms later
+      expect(MockInterface, :timestamp_in_ms, fn -> 2000 end)
+      # check for followers not seen in 50ms
+      expect(MockInterface, :heartbeat_ms, fn -> 50 end)
 
       # Configure interface to step down when quorum is lost
       expect(MockInterface, :quorum_lost, fn 0, 2, 2 -> :step_down end)
@@ -128,25 +132,35 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
 
     test "continues leadership when interface decides to continue despite quorum loss" do
       term = 2
-      quorum = 2  # Requires 2 followers to maintain quorum
+      # Requires 2 followers to maintain quorum
+      quorum = 2
       peers = [:peer_1, :peer_2]
       log = InMemoryLog.new()
 
       # Use different timestamps to simulate followers becoming inactive
-      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)  # initialization
+      # initialization
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
       expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
       leader = Leader.new(term, quorum, peers, log, MockInterface)
 
       # During timer tick, use a later timestamp
-      expect(MockInterface, :timestamp_in_ms, 2, fn -> 2000 end)  # called twice in send_heartbeats_and_continue
-      expect(MockInterface, :heartbeat_ms, 2, fn -> 50 end)  # called twice
+      # called twice in send_heartbeats_and_continue
+      expect(MockInterface, :timestamp_in_ms, 2, fn -> 2000 end)
+      # called twice
+      expect(MockInterface, :heartbeat_ms, 2, fn -> 50 end)
 
       # Configure interface to continue despite quorum loss
       expect(MockInterface, :quorum_lost, fn 0, 2, 2 -> :continue end)
-      
+
       # Should send heartbeats and continue
-      expect(MockInterface, :send_event, fn :peer_1, {:append_entries, 2, {0, 0}, [], {0, 0}} -> :ok end)
-      expect(MockInterface, :send_event, fn :peer_2, {:append_entries, 2, {0, 0}, [], {0, 0}} -> :ok end)
+      expect(MockInterface, :send_event, fn :peer_1, {:append_entries, 2, {0, 0}, [], {0, 0}} ->
+        :ok
+      end)
+
+      expect(MockInterface, :send_event, fn :peer_2, {:append_entries, 2, {0, 0}, [], {0, 0}} ->
+        :ok
+      end)
+
       expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
 
       {:ok, leader} = Leader.timer_ticked(leader, :heartbeat)

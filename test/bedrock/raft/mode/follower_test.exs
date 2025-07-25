@@ -52,7 +52,8 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       {:ok, log} = log |> Log.append_transactions({1, 1}, [{{2, 2}, "data2"}])
 
       candidate = :peer_1
-      candidate_last_transaction = {1, 5}  # older term despite higher index
+      # older term despite higher index
+      candidate_last_transaction = {1, 5}
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface, :peer_0)
@@ -68,7 +69,8 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       {:ok, log} = InMemoryLog.new() |> Log.append_transactions({0, 0}, [{{2, 1}, "data1"}])
 
       candidate = :peer_1
-      candidate_last_transaction = {2, 3}  # same term, higher index
+      # same term, higher index
+      candidate_last_transaction = {2, 3}
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface, :peer_0)
@@ -87,7 +89,8 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       {:ok, log} = InMemoryLog.new() |> Log.append_transactions({0, 0}, [{{2, 5}, "data1"}])
 
       candidate = :peer_1
-      candidate_last_transaction = {2, 3}  # same term, lower index
+      # same term, lower index
+      candidate_last_transaction = {2, 3}
 
       expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
       follower = Follower.new(term, log, MockInterface, :peer_0)
@@ -212,7 +215,8 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
       follower = Follower.new(term, log, MockInterface, :peer_0)
 
       leader = :peer_1
-      prev_transaction_id = {1, 99}  # doesn't exist
+      # doesn't exist
+      prev_transaction_id = {1, 99}
       transactions = [{{2, 2}, "new_data"}]
       commit_transaction_id = {2, 2}
 
@@ -235,6 +239,190 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
 
       assert follower.leader == leader
       assert follower.term == term
+    end
+  end
+
+  describe "timer_ticked/2" do
+    test "becomes candidate on election timeout" do
+      term = 1
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      assert :become_candidate = Follower.timer_ticked(follower, :election)
+    end
+
+    test "ignores heartbeat timer" do
+      term = 1
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      assert {:ok, _} = Follower.timer_ticked(follower, :heartbeat)
+    end
+  end
+
+  describe "add_transaction/2" do
+    test "returns error as followers cannot add transactions" do
+      term = 1
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      assert {:error, :not_leader} = Follower.add_transaction(follower, "some_data")
+    end
+  end
+
+  describe "append_entries_ack_received/4" do
+    test "becomes follower when term is higher" do
+      term = 1
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      assert :become_follower = Follower.append_entries_ack_received(follower, 2, {1, 1}, :peer_1)
+    end
+
+    test "ignores when term is lower" do
+      term = 2
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      assert {:ok, _} = Follower.append_entries_ack_received(follower, 1, {1, 1}, :peer_1)
+    end
+  end
+
+  describe "vote_received/3" do
+    test "becomes follower when term is higher" do
+      term = 1
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      assert :become_follower = Follower.vote_received(follower, 2, :peer_1)
+    end
+
+    test "ignores when term is lower" do
+      term = 2
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      assert {:ok, _} = Follower.vote_received(follower, 1, :peer_1)
+    end
+  end
+
+  describe "append_entries_received/6 with transaction skipping" do
+    test "skips transactions already in log" do
+      term = 1
+      {:ok, log} = InMemoryLog.new() |> Log.append_transactions({0, 0}, [{{1, 1}, "data1"}])
+      {:ok, log} = Log.commit_up_to(log, {1, 1})
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      leader = :peer_1
+      prev_transaction_id = {0, 0}
+      transactions = [{{1, 1}, "data1"}, {{1, 2}, "data2"}]
+      commit_transaction_id = {1, 2}
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {^leader, ^term} -> :ok end)
+
+      expect(MockInterface, :send_event, fn ^leader, {:append_entries_ack, ^term, {1, 2}} ->
+        :ok
+      end)
+
+      expect(MockInterface, :consensus_reached, fn _, {1, 2}, :latest -> :ok end)
+
+      {:ok, follower} =
+        Follower.append_entries_received(
+          follower,
+          term,
+          prev_transaction_id,
+          transactions,
+          commit_transaction_id,
+          leader
+        )
+
+      assert Log.has_transaction_id?(follower.log, {1, 2})
+    end
+
+    test "handles empty transactions list" do
+      term = 1
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      leader = :peer_1
+      prev_transaction_id = {0, 0}
+      transactions = []
+      commit_transaction_id = {0, 0}
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {^leader, ^term} -> :ok end)
+
+      expect(MockInterface, :send_event, fn ^leader, {:append_entries_ack, ^term, {0, 0}} ->
+        :ok
+      end)
+
+      {:ok, follower} =
+        Follower.append_entries_received(
+          follower,
+          term,
+          prev_transaction_id,
+          transactions,
+          commit_transaction_id,
+          leader
+        )
+
+      assert follower.leader == leader
+    end
+  end
+
+  describe "consensus behind handling" do
+    test "handles consensus_reached with :behind status when not all transactions committed" do
+      term = 1
+      {:ok, log} = InMemoryLog.new() |> Log.append_transactions({0, 0}, [{{1, 1}, "data1"}])
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      follower = Follower.new(term, log, MockInterface, :peer_0)
+
+      leader = :peer_1
+      prev_transaction_id = {1, 1}
+      transactions = [{{1, 2}, "data2"}, {{1, 3}, "data3"}]
+      commit_transaction_id = {1, 2}
+
+      expect(MockInterface, :timer, fn _ -> &mock_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {^leader, ^term} -> :ok end)
+
+      expect(MockInterface, :send_event, fn ^leader, {:append_entries_ack, ^term, {1, 3}} ->
+        :ok
+      end)
+
+      expect(MockInterface, :consensus_reached, fn _, {1, 2}, :behind -> :ok end)
+
+      {:ok, follower} =
+        Follower.append_entries_received(
+          follower,
+          term,
+          prev_transaction_id,
+          transactions,
+          commit_transaction_id,
+          leader
+        )
+
+      assert follower.leader == leader
+      assert Log.has_transaction_id?(follower.log, {1, 3})
     end
   end
 end
