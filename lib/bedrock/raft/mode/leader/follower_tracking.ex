@@ -82,10 +82,17 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   @spec newest_safe_transaction_id(t(), quorum :: non_neg_integer()) ::
           Raft.transaction_id()
   def newest_safe_transaction_id(t, quorum) do
-    t.table
-    |> :ets.select([{{:_, :_, :"$3", :_}, [], [:"$3"]}])
-    |> Enum.sort()
-    |> Enum.at(-quorum)
+    transaction_ids =
+      t.table
+      |> :ets.select([{{:_, :_, :"$3", :_}, [], [:"$3"]}])
+      |> Enum.sort()
+
+    cond do
+      length(transaction_ids) == 0 -> nil
+      quorum == 0 -> List.first(transaction_ids)
+      quorum > length(transaction_ids) -> List.first(transaction_ids)
+      true -> Enum.at(transaction_ids, -quorum)
+    end
   end
 
   @spec update_last_sent_transaction_id(t(), Raft.peer(), Raft.transaction_id()) :: t()
@@ -97,7 +104,14 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
   @spec update_newest_transaction_id(t(), Raft.peer(), Raft.transaction_id()) :: t()
   def update_newest_transaction_id(t, follower, newest_transaction_id) do
     now = timestamp(t)
-    t.table |> :ets.insert({follower, newest_transaction_id, newest_transaction_id, now})
+    # Update both sent and acknowledged transaction IDs atomically
+    t.table
+    |> :ets.update_element(follower, [
+      {2, newest_transaction_id},
+      {3, newest_transaction_id},
+      {4, now}
+    ])
+
     t
   end
 end

@@ -42,6 +42,7 @@ defmodule Bedrock.RaftTest do
 
   def fix_stubs(context) do
     stub(MockInterface, :heartbeat_ms, fn -> 50 end)
+    stub(MockInterface, :quorum_lost, fn _active, _total, _term -> :continue end)
     {:ok, context}
   end
 
@@ -560,7 +561,7 @@ defmodule Bedrock.RaftTest do
       # consensus up to that point.
 
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :consensus_reached, fn _, ^t1 -> :ok end)
+      expect(MockInterface, :consensus_reached, fn _, ^t1, :behind -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t2} -> :ok end)
       p = p |> Raft.handle_event({:append_entries, 2, t0, [{t0, :data1}, {t2, :data1}], t1}, :c)
 
@@ -572,7 +573,7 @@ defmodule Bedrock.RaftTest do
       # timer and signal consensus up to t2.
 
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :consensus_reached, fn _, ^t2 -> :ok end)
+      expect(MockInterface, :consensus_reached, fn _, ^t2, :latest -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t2} -> :ok end)
       p = p |> Raft.handle_event({:append_entries, 2, t2, [], t2}, :c)
 
@@ -653,10 +654,9 @@ defmodule Bedrock.RaftTest do
 
       verify!()
 
-      # some time goes by, and we don't hear back from either :b or :c... and
-      # then we drop back to being a follower.
-      advance_time.(50)
+      advance_time.(250)  # enough time for followers to be considered inactive
 
+      expect(MockInterface, :quorum_lost, fn 0, 2, 1 -> :step_down end)
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
       expect(MockInterface, :leadership_changed, fn {:undecided, 1} -> :ok end)
 
@@ -790,7 +790,7 @@ defmodule Bedrock.RaftTest do
       # up to t2. we then send out a new heartbeat to both :b and :c to let them
       # know that consensus has been reached up to t2.
 
-      expect(MockInterface, :consensus_reached, fn _, ^t2 -> :ok end)
+      expect(MockInterface, :consensus_reached, fn _, ^t2, :latest -> :ok end)
       expect(MockInterface, :send_event, fn :b, {:append_entries, 1, ^t2, [], ^t2} -> :ok end)
       expect(MockInterface, :send_event, fn :c, {:append_entries, 1, ^t2, [], ^t2} -> :ok end)
 
@@ -839,7 +839,7 @@ defmodule Bedrock.RaftTest do
       # left off, and we append them to our log. we also acknowledge the leader.
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
       expect(MockInterface, :send_event, fn :c, {:append_entries_ack, 2, ^t2} -> :ok end)
-      expect(MockInterface, :consensus_reached, fn _, ^t2 -> :ok end)
+      expect(MockInterface, :consensus_reached, fn _, ^t2, :latest -> :ok end)
 
       p = p |> Raft.handle_event({:append_entries, 2, t0, [{t1, :data1}, {t2, :data2}], t2}, :c)
 

@@ -215,7 +215,17 @@ defmodule Bedrock.Raft.Mode.Leader do
     |> case do
       {:ok, log} ->
         track_consensus_reached(newest_safe_transaction_id)
-        :ok = apply(t.interface, :consensus_reached, [t.log, newest_safe_transaction_id])
+
+        consistency =
+          if newest_transaction_id == newest_safe_transaction_id do
+            :latest
+          else
+            :behind
+          end
+
+        :ok =
+          apply(t.interface, :consensus_reached, [t.log, newest_safe_transaction_id, consistency])
+
         %{t | log: log} |> send_append_entries_to_followers(t.peers)
 
       :unchanged ->
@@ -259,19 +269,28 @@ defmodule Bedrock.Raft.Mode.Leader do
   def timer_ticked(t, :heartbeat) do
     track_heartbeat(t.term)
 
-    if active_followers(t) < t.quorum do
-      t |> become_follower()
+    active_followers = active_followers(t)
+    
+    if active_followers < t.quorum do
+      case apply(t.interface, :quorum_lost, [active_followers, length(t.peers), t.term]) do
+        :step_down -> become_follower(t)
+        :continue -> send_heartbeats_and_continue(t)
+      end
     else
-      t
-      |> send_append_entries_to_followers(
-        FollowerTracking.followers_not_seen_in(t.follower_tracking, t.interface.heartbeat_ms())
-      )
-      |> reset_timer()
-      |> then(&{:ok, &1})
+      send_heartbeats_and_continue(t)
     end
   end
 
   def timer_ticked(t, _), do: {:ok, t}
+
+  defp send_heartbeats_and_continue(t) do
+    t
+    |> send_append_entries_to_followers(
+      FollowerTracking.followers_not_seen_in(t.follower_tracking, t.interface.heartbeat_ms())
+    )
+    |> reset_timer()
+    |> then(&{:ok, &1})
+  end
 
   @spec active_followers(t()) :: non_neg_integer()
   defp active_followers(t) do

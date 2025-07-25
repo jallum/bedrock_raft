@@ -47,6 +47,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
 
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
+  alias Bedrock.Raft.TransactionID
 
   import Bedrock.Raft.Telemetry,
     only: [
@@ -108,7 +109,10 @@ defmodule Bedrock.Raft.Mode.Candidate do
         ) :: {:ok, t()} | :become_follower
   def vote_requested(t, term, candidate, candidate_newest_transaction_id)
       when term >= t.term and is_nil(t.voted_for) do
-    if candidate_newest_transaction_id >= Log.newest_transaction_id(t.log) do
+    if log_at_least_as_up_to_date?(
+         candidate_newest_transaction_id,
+         Log.newest_transaction_id(t.log)
+       ) do
       t |> vote_for(term, candidate)
     else
       t
@@ -240,4 +244,17 @@ defmodule Bedrock.Raft.Mode.Candidate do
 
   @spec set_timer(t()) :: t()
   defp set_timer(t), do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election])}
+
+  # Raft log safety check: candidate is at least as up-to-date (term priority, then index)
+  @spec log_at_least_as_up_to_date?(Raft.transaction_id(), Raft.transaction_id()) :: boolean()
+  defp log_at_least_as_up_to_date?(candidate_txn_id, my_txn_id) do
+    candidate_term = TransactionID.term(candidate_txn_id)
+    my_term = TransactionID.term(my_txn_id)
+
+    cond do
+      candidate_term > my_term -> true
+      candidate_term < my_term -> false
+      true -> TransactionID.index(candidate_txn_id) >= TransactionID.index(my_txn_id)
+    end
+  end
 end

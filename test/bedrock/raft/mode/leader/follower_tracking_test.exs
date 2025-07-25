@@ -100,4 +100,27 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTrackingTest do
     expect(MockTimer, :timestamp, fn -> 1150 end)
     assert [] = FollowerTracking.followers_not_seen_in(t, 55) |> Enum.sort()
   end
+
+  test "newest_safe_transaction_id/2 handles edge cases safely", %{t: t} do
+    # Test with quorum = 0 (single peer cluster)
+    expect(MockTimer, :timestamp, fn -> 2000 end)
+    FollowerTracking.update_newest_transaction_id(t, :f1, 5)
+    assert FollowerTracking.newest_safe_transaction_id(t, 0) == 5
+
+    # Test with quorum larger than follower count
+    # Should return the lowest transaction (most conservative)
+    expect(MockTimer, :timestamp, fn -> 2010 end)
+    FollowerTracking.update_newest_transaction_id(t, :f2, 3)
+    expect(MockTimer, :timestamp, fn -> 2020 end)
+    FollowerTracking.update_newest_transaction_id(t, :f3, 7)
+    assert FollowerTracking.newest_safe_transaction_id(t, 10) == 3
+
+    # Test with empty follower set (edge case)
+    expect(MockTimer, :timestamp, fn -> 2030 end)
+
+    empty_t =
+      FollowerTracking.new([], initial_transaction_id: 1, timestamp_fn: &MockTimer.timestamp/0)
+
+    assert FollowerTracking.newest_safe_transaction_id(empty_t, 1) == nil
+  end
 end

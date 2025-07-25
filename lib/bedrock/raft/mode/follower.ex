@@ -33,6 +33,7 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
+  alias Bedrock.Raft.TransactionID
 
   import Bedrock.Raft.Telemetry,
     only: [
@@ -97,7 +98,10 @@ defmodule Bedrock.Raft.Mode.Follower do
         ) :: {:ok, t()} | :become_follower
   def vote_requested(t, term, candidate, candidate_newest_transaction_id)
       when term >= t.term and is_nil(t.voted_for) do
-    if candidate_newest_transaction_id >= Log.newest_transaction_id(t.log) do
+    if log_at_least_as_up_to_date?(
+         candidate_newest_transaction_id,
+         Log.newest_transaction_id(t.log)
+       ) do
       t
       |> reset_timer()
       |> vote_for(term, candidate)
@@ -155,9 +159,7 @@ defmodule Bedrock.Raft.Mode.Follower do
           from :: Raft.peer()
         ) ::
           {:ok, t()}
-  def append_entries_received(t, term, _, _, _, from)
-      when term > t.term and t.from not in [:undecided, from],
-      do: {:ok, t}
+  # Accept append_entries from any peer with higher term per Raft specification
 
   def append_entries_received(
         t,
@@ -176,13 +178,24 @@ defmodule Bedrock.Raft.Mode.Follower do
       commit_transaction_id
     )
 
-    t
-    |> reset_timer()
-    |> note_change_in_leadership_if_necessary(from, term)
-    |> try_to_append_transactions(prev_transaction_id, transactions)
-    |> try_to_reach_consensus(min(Log.newest_transaction_id(t.log), commit_transaction_id))
-    |> send_append_entries_ack()
-    |> then(&{:ok, &1})
+    case validate_log_consistency(t.log, prev_transaction_id) do
+      :ok ->
+        t
+        |> reset_timer()
+        |> note_change_in_leadership_if_necessary(from, term)
+        |> try_to_append_transactions(prev_transaction_id, transactions)
+        |> try_to_reach_consensus(commit_transaction_id)
+        |> send_append_entries_ack()
+        |> then(&{:ok, &1})
+
+      :invalid ->
+        # Send ack but don't update log - leader will backtrack
+        t
+        |> reset_timer()
+        |> note_change_in_leadership_if_necessary(from, term)
+        |> send_append_entries_ack()
+        |> then(&{:ok, &1})
+    end
   end
 
   def append_entries_received(t, _, _, _, _, _), do: {:ok, t}
@@ -191,6 +204,20 @@ defmodule Bedrock.Raft.Mode.Follower do
   @spec timer_ticked(t(), :election) :: :become_candidate
   def timer_ticked(t, :election), do: t |> become_candidate()
   def timer_ticked(t, _), do: {:ok, t}
+
+  # Validate log consistency per Raft specification
+  @spec validate_log_consistency(Log.t(), Raft.transaction_id()) :: :ok | :invalid
+  defp validate_log_consistency(log, prev_transaction_id) do
+    if prev_transaction_id == Log.initial_transaction_id(log) do
+      :ok
+    else
+      if Log.has_transaction_id?(log, prev_transaction_id) do
+        :ok
+      else
+        :invalid
+      end
+    end
+  end
 
   def try_to_append_transactions(t, _prev_transaction, []), do: t
 
@@ -204,15 +231,11 @@ defmodule Bedrock.Raft.Mode.Follower do
         newest_safe_transaction_id
       )
 
-    if prev_transaction_id < newest_safe_transaction_id do
-      t
+    with {:ok, log} <- Log.purge_transactions_after(t.log, prev_transaction_id),
+         {:ok, log} <- Log.append_transactions(log, prev_transaction_id, transactions) do
+      %{t | log: log}
     else
-      with {:ok, log} <- Log.purge_transactions_after(t.log, prev_transaction_id),
-           {:ok, log} <- Log.append_transactions(log, prev_transaction_id, transactions) do
-        %{t | log: log}
-      else
-        {:error, :prev_transaction_not_found} -> t
-      end
+      {:error, :prev_transaction_not_found} -> t
     end
   end
 
@@ -243,12 +266,23 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   defp note_change_in_leadership_if_necessary(t, _, _), do: t
 
-  defp try_to_reach_consensus(t, transaction_id) do
-    Log.commit_up_to(t.log, transaction_id)
+  defp try_to_reach_consensus(t, newest_safe_transaction_id) do
+    newest_transaction_id = Log.newest_transaction_id(t.log)
+    commit_transaction_id = min(newest_transaction_id, newest_safe_transaction_id)
+
+    Log.commit_up_to(t.log, commit_transaction_id)
     |> case do
       {:ok, log} ->
-        track_consensus_reached(transaction_id)
-        :ok = apply(t.interface, :consensus_reached, [t.log, transaction_id])
+        track_consensus_reached(commit_transaction_id)
+
+        consistency =
+          if newest_transaction_id == commit_transaction_id do
+            :latest
+          else
+            :behind
+          end
+
+        :ok = apply(t.interface, :consensus_reached, [t.log, commit_transaction_id, consistency])
         %{t | log: log}
 
       :unchanged ->
@@ -301,4 +335,17 @@ defmodule Bedrock.Raft.Mode.Follower do
 
   @spec set_timer(t()) :: t()
   defp set_timer(t), do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election])}
+
+  # Raft log safety check: candidate is at least as up-to-date (term priority, then index)
+  @spec log_at_least_as_up_to_date?(Raft.transaction_id(), Raft.transaction_id()) :: boolean()
+  defp log_at_least_as_up_to_date?(candidate_txn_id, my_txn_id) do
+    candidate_term = TransactionID.term(candidate_txn_id)
+    my_term = TransactionID.term(my_txn_id)
+
+    cond do
+      candidate_term > my_term -> true
+      candidate_term < my_term -> false
+      true -> TransactionID.index(candidate_txn_id) >= TransactionID.index(my_txn_id)
+    end
+  end
 end

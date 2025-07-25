@@ -47,5 +47,19 @@ defmodule Bedrock.Raft.Interface do
   Signal that a consensus has been reached up to the given transaction by the
   quorum of Raft peers.
   """
-  @callback consensus_reached(Raft.Log.t(), Raft.transaction_id()) :: :ok
+  @callback consensus_reached(Raft.Log.t(), Raft.transaction_id(), :latest | :behind) :: :ok
+
+  @doc """
+  Called when a leader detects quorum loss. The implementation decides whether
+  to step down (:step_down) or continue as leader (:continue). This allows
+  different policies:
+  - Two-node clusters: typically :step_down when follower is lost
+  - Larger clusters: typically :continue (standard Raft behavior)
+  - Custom policies based on application requirements
+  """
+  @callback quorum_lost(
+              active_followers :: non_neg_integer(),
+              total_followers :: non_neg_integer(),
+              term :: Raft.election_term()
+            ) :: :step_down | :continue
 end

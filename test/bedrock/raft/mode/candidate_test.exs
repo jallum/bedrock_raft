@@ -3,6 +3,7 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
   use ExUnit.Case, async: true
   alias Bedrock.Raft.Mode.Candidate
   alias Bedrock.Raft.Log.InMemoryLog
+  alias Bedrock.Raft.Log
   import Mox
   setup :verify_on_exit!
 
@@ -55,6 +56,56 @@ defmodule Bedrock.Raft.Mode.CandidateTest do
     test "returns :become_leader when quorum is reached", %{candidate: candidate} do
       {:ok, candidate_with_vote} = Candidate.vote_received(candidate, 1, :b)
       assert :become_leader = Candidate.vote_received(candidate_with_vote, 1, :c)
+    end
+  end
+
+  describe "vote_requested/4" do
+    setup %{log: log} do
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {0, 0}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate = Candidate.new(1, 1, [:b, :c], log, MockInterface)
+      {:ok, candidate: candidate}
+    end
+
+    test "votes for candidate with more up-to-date log", %{candidate: candidate} do
+      candidate_txn_id = {2, 1}
+
+      expect(MockInterface, :send_event, fn :peer_1, {:vote, 1} -> :ok end)
+
+      {:ok, updated_candidate} = Candidate.vote_requested(candidate, 1, :peer_1, candidate_txn_id)
+      assert updated_candidate.voted_for == :peer_1
+    end
+
+    test "rejects candidate with older log term", %{candidate: _candidate} do
+      {:ok, log_with_data} =
+        InMemoryLog.new() |> Log.append_transactions({0, 0}, [{{2, 1}, "data"}])
+
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {2, 1}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate_with_log = Candidate.new(1, 1, [:b, :c], log_with_data, MockInterface)
+
+      candidate_txn_id = {1, 5}  # older term despite higher index
+
+      {:ok, updated_candidate} =
+        Candidate.vote_requested(candidate_with_log, 1, :peer_1, candidate_txn_id)
+
+      assert updated_candidate.voted_for == nil
+    end
+
+    test "rejects candidate with same term but shorter log", %{candidate: _candidate} do
+      {:ok, log_with_data} =
+        InMemoryLog.new() |> Log.append_transactions({0, 0}, [{{2, 5}, "data"}])
+
+      expect(MockInterface, :send_event, 2, fn _, {:request_vote, 1, {2, 5}} -> :ok end)
+      expect(MockInterface, :timer, fn :election -> &mock_cancel/0 end)
+      candidate_with_log = Candidate.new(1, 1, [:b, :c], log_with_data, MockInterface)
+
+      candidate_txn_id = {2, 3}  # same term, lower index
+
+      {:ok, updated_candidate} =
+        Candidate.vote_requested(candidate_with_log, 1, :peer_1, candidate_txn_id)
+
+      assert updated_candidate.voted_for == nil
     end
   end
 
