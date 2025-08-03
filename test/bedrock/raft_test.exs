@@ -855,6 +855,112 @@ defmodule Bedrock.RaftTest do
     end
   end
 
+  describe "Single-node consensus" do
+    test "single-node cluster immediately reaches consensus when adding transactions" do
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:a, 0} -> :ok end)
+
+      # Create single-node cluster (no peers)
+      raft = Raft.new(:a, [], InMemoryLog.new(), MockInterface)
+
+      # Verify it starts as leader
+      assert Raft.am_i_the_leader?(raft)
+      assert {:a, 0} == Raft.leadership(raft)
+
+      # Add first transaction - should immediately reach consensus
+      expect(MockInterface, :consensus_reached, fn log, {0, 1}, :latest ->
+        assert log != nil
+        :ok
+      end)
+
+      {:ok, raft, txn_id1} = Raft.add_transaction(raft, "first_transaction")
+      assert txn_id1 == {0, 1}
+
+      # Verify consensus was reached
+      log = Raft.log(raft)
+      assert Log.newest_transaction_id(log) == {0, 1}
+      assert Log.newest_safe_transaction_id(log) == {0, 1}
+
+      # Add second transaction - should also immediately reach consensus
+      expect(MockInterface, :consensus_reached, fn _, {0, 2}, :latest -> :ok end)
+
+      {:ok, raft, txn_id2} = Raft.add_transaction(raft, "second_transaction")
+      assert txn_id2 == {0, 2}
+
+      # Verify both transactions are committed
+      log = Raft.log(raft)
+      assert Log.newest_transaction_id(log) == {0, 2}
+      assert Log.newest_safe_transaction_id(log) == {0, 2}
+
+      # Verify log contains both transactions
+      transactions = Log.transactions_from(log, {0, 0}, :newest)
+      assert length(transactions) == 2
+      assert transactions == [{{0, 1}, "first_transaction"}, {{0, 2}, "second_transaction"}]
+    end
+
+    test "single-node cluster consensus works with different term numbers" do
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:single, 0} -> :ok end)
+
+      # Create single-node cluster
+      raft = Raft.new(:single, [], InMemoryLog.new(), MockInterface)
+
+      # Simulate being in term 5 by manually updating the leader mode term (simulates election win)
+      raft = %{raft | mode: %{raft.mode | term: 5}}
+
+      # Add transaction in term 5
+      expect(MockInterface, :consensus_reached, fn _, {5, 1}, :latest -> :ok end)
+
+      {:ok, raft, txn_id} = Raft.add_transaction(raft, "high_term_data")
+      assert txn_id == {5, 1}
+
+      log = Raft.log(raft)
+      assert Log.newest_safe_transaction_id(log) == {5, 1}
+    end
+
+    test "single-node cluster handles rapid sequential transactions" do
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:rapid, 0} -> :ok end)
+
+      raft = Raft.new(:rapid, [], InMemoryLog.new(), MockInterface)
+
+      # Rapidly add 5 transactions
+      transactions_data = ["txn1", "txn2", "txn3", "txn4", "txn5"]
+
+      {final_raft, txn_ids} =
+        transactions_data
+        |> Enum.with_index(1)
+        |> Enum.reduce({raft, []}, fn {data, index}, {current_raft, ids} ->
+          expect(MockInterface, :consensus_reached, fn _, {0, ^index}, :latest -> :ok end)
+          {:ok, new_raft, txn_id} = Raft.add_transaction(current_raft, data)
+          {new_raft, [txn_id | ids]}
+        end)
+
+      # Verify all transactions have correct IDs
+      expected_ids = [{0, 1}, {0, 2}, {0, 3}, {0, 4}, {0, 5}]
+      assert Enum.reverse(txn_ids) == expected_ids
+
+      # Verify final state
+      log = Raft.log(final_raft)
+      assert Log.newest_transaction_id(log) == {0, 5}
+      assert Log.newest_safe_transaction_id(log) == {0, 5}
+
+      # Verify all transactions are in log
+      all_transactions = Log.transactions_from(log, {0, 0}, :newest)
+      assert length(all_transactions) == 5
+
+      expected_transactions = [
+        {{0, 1}, "txn1"},
+        {{0, 2}, "txn2"},
+        {{0, 3}, "txn3"},
+        {{0, 4}, "txn4"},
+        {{0, 5}, "txn5"}
+      ]
+
+      assert all_transactions == expected_transactions
+    end
+  end
+
   describe "Error cases and edge paths" do
     test "next_transaction_id returns error when not leader" do
       expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)

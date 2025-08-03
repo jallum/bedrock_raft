@@ -265,5 +265,102 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       assert txn_id == {2, 1}
       assert leader.id_sequence == 1
     end
+
+    test "immediately reaches consensus for single-node cluster (quorum = 0)" do
+      term = 1
+      quorum = 0
+      peers = []
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
+      leader = Leader.new(term, quorum, peers, log, MockInterface)
+
+      # For single-node clusters, consensus should be reached immediately
+      expect(MockInterface, :consensus_reached, fn log, {1, 1}, :latest ->
+        # Verify the log and transaction_id are correct
+        assert log != nil
+        :ok
+      end)
+
+      {:ok, leader, txn_id} = Leader.add_transaction(leader, "single_node_data")
+
+      assert txn_id == {1, 1}
+      assert leader.id_sequence == 1
+
+      # Verify the transaction is committed in the log
+      assert Bedrock.Raft.Log.newest_safe_transaction_id(leader.log) == {1, 1}
+      assert Bedrock.Raft.Log.newest_transaction_id(leader.log) == {1, 1}
+    end
+
+    test "handles multiple transactions in single-node cluster correctly" do
+      term = 1
+      quorum = 0
+      peers = []
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
+      leader = Leader.new(term, quorum, peers, log, MockInterface)
+
+      # First transaction
+      expect(MockInterface, :consensus_reached, fn _, {1, 1}, :latest -> :ok end)
+      {:ok, leader, txn_id1} = Leader.add_transaction(leader, "data1")
+      assert txn_id1 == {1, 1}
+
+      # Second transaction
+      expect(MockInterface, :consensus_reached, fn _, {1, 2}, :latest -> :ok end)
+      {:ok, leader, txn_id2} = Leader.add_transaction(leader, "data2")
+      assert txn_id2 == {1, 2}
+
+      # Third transaction
+      expect(MockInterface, :consensus_reached, fn _, {1, 3}, :latest -> :ok end)
+      {:ok, leader, txn_id3} = Leader.add_transaction(leader, "data3")
+      assert txn_id3 == {1, 3}
+
+      # Verify all transactions are committed
+      assert Bedrock.Raft.Log.newest_safe_transaction_id(leader.log) == {1, 3}
+      assert Bedrock.Raft.Log.newest_transaction_id(leader.log) == {1, 3}
+
+      # Verify log contains all transactions
+      transactions = Bedrock.Raft.Log.transactions_from(leader.log, {0, 0}, :newest)
+      assert length(transactions) == 3
+      assert transactions == [{{1, 1}, "data1"}, {{1, 2}, "data2"}, {{1, 3}, "data3"}]
+    end
+
+    test "single-node cluster consensus works from term 0" do
+      term = 0
+      quorum = 0
+      peers = []
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
+      leader = Leader.new(term, quorum, peers, log, MockInterface)
+
+      # Transaction in term 0 should work
+      expect(MockInterface, :consensus_reached, fn _, {0, 1}, :latest -> :ok end)
+      {:ok, leader, txn_id} = Leader.add_transaction(leader, "term_zero_data")
+
+      assert txn_id == {0, 1}
+      assert Bedrock.Raft.Log.newest_safe_transaction_id(leader.log) == {0, 1}
+    end
+
+    test "single-node cluster doesn't send append_entries to any peers" do
+      term = 1
+      quorum = 0
+      peers = []
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
+      leader = Leader.new(term, quorum, peers, log, MockInterface)
+
+      # No send_event calls should be made to peers since there are none
+      expect(MockInterface, :consensus_reached, fn _, {1, 1}, :latest -> :ok end)
+
+      {:ok, _leader, txn_id} = Leader.add_transaction(leader, "no_peers_data")
+      assert txn_id == {1, 1}
+    end
   end
 end
