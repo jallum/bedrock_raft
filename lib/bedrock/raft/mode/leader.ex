@@ -61,6 +61,7 @@ defmodule Bedrock.Raft.Mode.Leader do
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Mode.Leader.FollowerTracking
+  alias Bedrock.Raft.TransactionID
 
   import Bedrock.Raft.Telemetry,
     only: [
@@ -108,11 +109,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     # Initialize id_sequence to the index of the newest transaction in the log
     # so we don't generate conflicting transaction IDs
     newest_txn_id = Log.newest_transaction_id(log)
-    initial_id_sequence = if newest_txn_id == {0, 0} do
-      0
-    else
-      Bedrock.Raft.TransactionID.index(newest_txn_id)
-    end
+    initial_id_sequence = TransactionID.index(newest_txn_id)
 
     %__MODULE__{
       quorum: quorum,

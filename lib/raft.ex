@@ -26,7 +26,6 @@ defmodule Bedrock.Raft do
 
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
-  alias Bedrock.Raft.TransactionID
   alias Bedrock.Raft.Mode.Candidate
   alias Bedrock.Raft.Mode.Follower
   alias Bedrock.Raft.Mode.Leader
@@ -68,8 +67,8 @@ defmodule Bedrock.Raft do
     # Assume that we'll always vote for ourselves, so majority - 1.
     quorum = determine_majority([me | peers]) - 1
 
-    # Start with the newest term in the log.
-    term = Log.newest_safe_transaction_id(log) |> TransactionID.term()
+    # Restore the current term from persistent storage as required by Raft spec.
+    term = Log.current_term(log)
 
     %__MODULE__{
       me: me,
@@ -238,14 +237,26 @@ defmodule Bedrock.Raft do
   defp become_candidate(t, term, log) do
     track_became_candidate(term, t.quorum, t.peers)
 
-    %{t | mode: Candidate.new(term, t.quorum, t.peers, log, t.interface)}
+    # Persist the new term before becoming candidate (Raft safety requirement)
+    {:ok, updated_log} = Log.save_current_term(log, term)
+
+    %{t | mode: Candidate.new(term, t.quorum, t.peers, updated_log, t.interface)}
     |> notify_change_in_leadership(leader(t))
   end
 
   defp become_follower(t, leader, term, log) do
     track_became_follower(term, leader)
 
-    %{t | mode: Follower.new(term, log, t.interface, t.me, leader)}
+    # Persist the new term if it's higher than our current term (Raft safety requirement)
+    updated_log =
+      if term > Log.current_term(log) do
+        {:ok, log_with_term} = Log.save_current_term(log, term)
+        log_with_term
+      else
+        log
+      end
+
+    %{t | mode: Follower.new(term, updated_log, t.interface, t.me, leader)}
     |> notify_change_in_leadership(leader(t))
   end
 

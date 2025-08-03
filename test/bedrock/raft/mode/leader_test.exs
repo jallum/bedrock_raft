@@ -396,11 +396,13 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       log = InMemoryLog.new()
 
       # Pre-populate log with existing transactions using the Log protocol
-      {:ok, log} = Bedrock.Raft.Log.append_transactions(log, {0, 0}, [
-        {{0, 1}, "transaction 1"},
-        {{0, 2}, "transaction 2"},
-        {{0, 3}, "transaction 3"}
-      ])
+      {:ok, log} =
+        Bedrock.Raft.Log.append_transactions(log, {0, 0}, [
+          {{0, 1}, "transaction 1"},
+          {{0, 2}, "transaction 2"},
+          {{0, 3}, "transaction 3"}
+        ])
+
       {:ok, log} = Bedrock.Raft.Log.commit_up_to(log, {0, 3})
 
       expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
@@ -413,7 +415,7 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       # Next transaction should be {0, 4}
       expect(MockInterface, :consensus_reached, fn _, {0, 4}, :latest -> :ok end)
       {:ok, leader, txn_id} = Leader.add_transaction(leader, "transaction 4")
-      
+
       assert txn_id == {0, 4}
       assert leader.id_sequence == 4
     end
@@ -422,7 +424,8 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       term = 1
       quorum = 0
       peers = []
-      log = InMemoryLog.new()  # Empty log
+      # Empty log
+      log = InMemoryLog.new()
 
       expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
       expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
@@ -434,7 +437,7 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       # First transaction should be {1, 1}
       expect(MockInterface, :consensus_reached, fn _, {1, 1}, :latest -> :ok end)
       {:ok, leader, txn_id} = Leader.add_transaction(leader, "first transaction")
-      
+
       assert txn_id == {1, 1}
       assert leader.id_sequence == 1
     end

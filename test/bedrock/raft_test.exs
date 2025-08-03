@@ -171,6 +171,10 @@ defmodule Bedrock.RaftTest do
                quorum: 1
              } = p
 
+      # Verify term was incremented and persisted during election
+      log = Raft.log(p)
+      assert Log.current_term(log) == 1
+
       # While we are a candidate, there's definitely no leader.
       assert {:undecided, 1} = Raft.leadership(p)
       refute Raft.am_i_the_leader?(p)
@@ -876,10 +880,12 @@ defmodule Bedrock.RaftTest do
       {:ok, raft, txn_id1} = Raft.add_transaction(raft, "first_transaction")
       assert txn_id1 == {0, 1}
 
-      # Verify consensus was reached
+      # Verify consensus was reached and term is persisted
       log = Raft.log(raft)
       assert Log.newest_transaction_id(log) == {0, 1}
       assert Log.newest_safe_transaction_id(log) == {0, 1}
+      # Term persisted in log
+      assert Log.current_term(log) == 0
 
       # Add second transaction - should also immediately reach consensus
       expect(MockInterface, :consensus_reached, fn _, {0, 2}, :latest -> :ok end)
@@ -905,8 +911,10 @@ defmodule Bedrock.RaftTest do
       # Create single-node cluster
       raft = Raft.new(:single, [], InMemoryLog.new(), MockInterface)
 
-      # Simulate being in term 5 by manually updating the leader mode term (simulates election win)
-      raft = %{raft | mode: %{raft.mode | term: 5}}
+      # Simulate being in term 5 by persisting the term and updating the leader mode
+      log = Raft.log(raft)
+      {:ok, updated_log} = Log.save_current_term(log, 5)
+      raft = %{raft | mode: %{raft.mode | term: 5, log: updated_log}}
 
       # Add transaction in term 5
       expect(MockInterface, :consensus_reached, fn _, {5, 1}, :latest -> :ok end)
@@ -916,6 +924,8 @@ defmodule Bedrock.RaftTest do
 
       log = Raft.log(raft)
       assert Log.newest_safe_transaction_id(log) == {5, 1}
+      # Verify term persistence
+      assert Log.current_term(log) == 5
     end
 
     test "single-node cluster handles rapid sequential transactions" do
@@ -999,6 +1009,10 @@ defmodule Bedrock.RaftTest do
       p = Raft.handle_event(candidate, {:vote, 2}, :peer_d)
 
       assert %Raft{mode: %Follower{term: 2}} = p
+
+      # Verify higher term was persisted when becoming follower
+      log = Raft.log(p)
+      assert Log.current_term(log) == 2
     end
 
     test "leader becomes follower on higher term ack" do

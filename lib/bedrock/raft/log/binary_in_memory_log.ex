@@ -11,17 +11,20 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLog do
 
   @type t :: %__MODULE__{
           transactions: :ets.table(),
-          last_commit: Raft.binary_transaction_id() | nil
+          last_commit: Raft.binary_transaction_id() | nil,
+          current_term: Raft.election_term()
         }
   defstruct ~w[
     transactions
     last_commit
+    current_term
   ]a
 
   @spec new() :: t()
   def new,
     do: %__MODULE__{
-      transactions: :ets.new(:binary_in_memory_log, [:ordered_set])
+      transactions: :ets.new(:binary_in_memory_log, [:ordered_set]),
+      current_term: 0
     }
 
   defimpl Bedrock.Raft.Log do
@@ -143,5 +146,11 @@ defmodule Bedrock.Raft.Log.BinaryInMemoryLog do
 
     def normalize_transaction(_t, {transaction_id, data}) when is_tuple(transaction_id),
       do: {transaction_id |> TransactionID.encode(), data}
+
+    @impl true
+    def current_term(t), do: t.current_term
+
+    @impl true
+    def save_current_term(t, term), do: {:ok, %{t | current_term: term}}
   end
 end

@@ -88,7 +88,7 @@ defmodule Bedrock.Raft.Mode.Leader.FollowerTracking do
       |> Enum.sort()
 
     cond do
-      length(transaction_ids) == 0 -> nil
+      Enum.empty?(transaction_ids) -> nil
       quorum == 0 -> List.first(transaction_ids)
       quorum > length(transaction_ids) -> List.first(transaction_ids)
       true -> Enum.at(transaction_ids, -quorum)

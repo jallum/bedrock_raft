@@ -81,4 +81,19 @@ defprotocol Bedrock.Raft.Log do
           to :: Raft.transaction_id() | :newest | :newest_safe
         ) :: [Raft.transaction()]
   def transactions_from(t, from, to)
+
+  @doc """
+  Get the current term for the log. This is the latest election term the
+  server has seen and must be persisted across restarts according to the
+  Raft specification.
+  """
+  @spec current_term(t()) :: Raft.election_term()
+  def current_term(t)
+
+  @doc """
+  Save the current term to persistent storage. This must be called before
+  responding to RPCs to ensure Raft safety guarantees are maintained.
+  """
+  @spec save_current_term(t(), Raft.election_term()) :: {:ok, t()}
+  def save_current_term(t, term)
 end
