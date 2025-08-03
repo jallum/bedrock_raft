@@ -362,5 +362,81 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       {:ok, _leader, txn_id} = Leader.add_transaction(leader, "no_peers_data")
       assert txn_id == {1, 1}
     end
+
+    test "single-node cluster passes committed log to consensus_reached callback" do
+      term = 1
+      quorum = 0
+      peers = []
+      log = InMemoryLog.new()
+
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
+      leader = Leader.new(term, quorum, peers, log, MockInterface)
+
+      # Verify that the log passed to consensus_reached has the transaction committed
+      expect(MockInterface, :consensus_reached, fn committed_log, {1, 1}, :latest ->
+        # The committed log should have the transaction as both newest and newest_safe
+        assert Bedrock.Raft.Log.newest_transaction_id(committed_log) == {1, 1}
+        assert Bedrock.Raft.Log.newest_safe_transaction_id(committed_log) == {1, 1}
+        :ok
+      end)
+
+      {:ok, leader, txn_id} = Leader.add_transaction(leader, "test_data")
+
+      assert txn_id == {1, 1}
+      # Verify the leader's log is also correctly updated
+      assert Bedrock.Raft.Log.newest_safe_transaction_id(leader.log) == {1, 1}
+      assert Bedrock.Raft.Log.newest_transaction_id(leader.log) == {1, 1}
+    end
+
+    test "leader initializes id_sequence from existing log" do
+      term = 0
+      quorum = 0
+      peers = []
+      log = InMemoryLog.new()
+
+      # Pre-populate log with existing transactions using the Log protocol
+      {:ok, log} = Bedrock.Raft.Log.append_transactions(log, {0, 0}, [
+        {{0, 1}, "transaction 1"},
+        {{0, 2}, "transaction 2"},
+        {{0, 3}, "transaction 3"}
+      ])
+      {:ok, log} = Bedrock.Raft.Log.commit_up_to(log, {0, 3})
+
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
+      leader = Leader.new(term, quorum, peers, log, MockInterface)
+
+      # Leader should initialize id_sequence to 3 (index of {0, 3})
+      assert leader.id_sequence == 3
+
+      # Next transaction should be {0, 4}
+      expect(MockInterface, :consensus_reached, fn _, {0, 4}, :latest -> :ok end)
+      {:ok, leader, txn_id} = Leader.add_transaction(leader, "transaction 4")
+      
+      assert txn_id == {0, 4}
+      assert leader.id_sequence == 4
+    end
+
+    test "leader handles empty log initialization correctly" do
+      term = 1
+      quorum = 0
+      peers = []
+      log = InMemoryLog.new()  # Empty log
+
+      expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)
+      leader = Leader.new(term, quorum, peers, log, MockInterface)
+
+      # For empty log, id_sequence should be 0
+      assert leader.id_sequence == 0
+
+      # First transaction should be {1, 1}
+      expect(MockInterface, :consensus_reached, fn _, {1, 1}, :latest -> :ok end)
+      {:ok, leader, txn_id} = Leader.add_transaction(leader, "first transaction")
+      
+      assert txn_id == {1, 1}
+      assert leader.id_sequence == 1
+    end
   end
 end

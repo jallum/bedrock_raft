@@ -105,11 +105,20 @@ defmodule Bedrock.Raft.Mode.Leader do
         ) ::
           t()
   def new(term, quorum, peers, log, interface) do
+    # Initialize id_sequence to the index of the newest transaction in the log
+    # so we don't generate conflicting transaction IDs
+    newest_txn_id = Log.newest_transaction_id(log)
+    initial_id_sequence = if newest_txn_id == {0, 0} do
+      0
+    else
+      Bedrock.Raft.TransactionID.index(newest_txn_id)
+    end
+
     %__MODULE__{
       quorum: quorum,
       peers: peers,
       term: term,
-      id_sequence: 0,
+      id_sequence: initial_id_sequence,
       follower_tracking:
         FollowerTracking.new(peers,
           initial_transaction_id: Log.newest_safe_transaction_id(log),
@@ -171,7 +180,7 @@ defmodule Bedrock.Raft.Mode.Leader do
         case Log.commit_up_to(t.log, new_txn_id) do
           {:ok, committed_log} ->
             track_consensus_reached(new_txn_id)
-            :ok = apply(t.interface, :consensus_reached, [t.log, new_txn_id, :latest])
+            :ok = apply(t.interface, :consensus_reached, [committed_log, new_txn_id, :latest])
             {:ok, %{t | log: committed_log}, new_txn_id}
 
           :unchanged ->
@@ -239,7 +248,7 @@ defmodule Bedrock.Raft.Mode.Leader do
           end
 
         :ok =
-          apply(t.interface, :consensus_reached, [t.log, newest_safe_transaction_id, consistency])
+          apply(t.interface, :consensus_reached, [log, newest_safe_transaction_id, consistency])
 
         %{t | log: log} |> send_append_entries_to_followers(t.peers)
 

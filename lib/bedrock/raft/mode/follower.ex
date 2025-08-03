@@ -282,7 +282,7 @@ defmodule Bedrock.Raft.Mode.Follower do
             :behind
           end
 
-        :ok = apply(t.interface, :consensus_reached, [t.log, commit_transaction_id, consistency])
+        :ok = apply(t.interface, :consensus_reached, [log, commit_transaction_id, consistency])
         %{t | log: log}
 
       :unchanged ->
