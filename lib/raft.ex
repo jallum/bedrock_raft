@@ -77,12 +77,9 @@ defmodule Bedrock.Raft do
       interface: interface
     }
     |> then(fn t ->
-      # If we're the only peer, we can be the leader.
-      if quorum == 0 do
-        t |> become_leader(term, log)
-      else
-        t |> become_follower(:undecided, term, log)
-      end
+      # All nodes start as followers and must go through election process
+      # This ensures Raft specification compliance for term advancement
+      t |> become_follower(:undecided, term, log)
     end)
   end
 
@@ -240,8 +237,16 @@ defmodule Bedrock.Raft do
     # Persist the new term before becoming candidate (Raft safety requirement)
     {:ok, updated_log} = Log.save_current_term(log, term)
 
-    %{t | mode: Candidate.new(term, t.quorum, t.peers, updated_log, t.interface)}
-    |> notify_change_in_leadership(leader(t))
+    case Candidate.new(term, t.quorum, t.peers, updated_log, t.interface) do
+      :become_leader ->
+        # Single-node cluster immediately becomes leader
+        t |> become_leader(term, updated_log)
+
+      candidate ->
+        # Multi-node cluster becomes candidate and waits for votes
+        %{t | mode: candidate}
+        |> notify_change_in_leadership(leader(t))
+    end
   end
 
   defp become_follower(t, leader, term, log) do

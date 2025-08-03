@@ -61,26 +61,24 @@ defmodule Bedrock.RaftTest do
   end
 
   describe "Raft can be constructed" do
-    test "when creating an instance with no other peers, we start out as a leader" do
-      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :leadership_changed, fn {:a, 0} -> :ok end)
+    test "when creating an instance with no other peers, we start out as a follower" do
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
 
       p = Raft.new(:a, [], InMemoryLog.new(), MockInterface)
 
       assert %Raft{
                me: :a,
-               mode: %Leader{
-                 peers: [],
-                 quorum: 0,
-                 term: 0
+               mode: %Follower{
+                 term: 0,
+                 leader: :undecided
                },
                peers: [],
                quorum: 0
              } = p
 
       assert :a = Raft.me(p)
-      assert {:a, 0} = Raft.leadership(p)
-      assert Raft.am_i_the_leader?(p)
+      assert {:undecided, 0} = Raft.leadership(p)
+      refute Raft.am_i_the_leader?(p)
       assert [:a] = Raft.known_peers(p)
     end
 
@@ -861,60 +859,76 @@ defmodule Bedrock.RaftTest do
 
   describe "Single-node consensus" do
     test "single-node cluster immediately reaches consensus when adding transactions" do
-      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :leadership_changed, fn {:a, 0} -> :ok end)
+      # Single-node clusters now start as followers and go through election process
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
 
-      # Create single-node cluster (no peers)
+      # Create single-node cluster (no peers) - starts as follower
       raft = Raft.new(:a, [], InMemoryLog.new(), MockInterface)
 
-      # Verify it starts as leader
-      assert Raft.am_i_the_leader?(raft)
-      assert {:a, 0} == Raft.leadership(raft)
+      # Verify it starts as follower
+      refute Raft.am_i_the_leader?(raft)
+      assert {:undecided, 0} == Raft.leadership(raft)
 
-      # Add first transaction - should immediately reach consensus
-      expect(MockInterface, :consensus_reached, fn log, {0, 1}, :latest ->
+      # Simulate election timeout - becomes candidate then leader
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:a, 1} -> :ok end)
+
+      raft = Raft.handle_event(raft, :election, :timer)
+
+      # Now it should be leader in term 1
+      assert Raft.am_i_the_leader?(raft)
+      assert {:a, 1} == Raft.leadership(raft)
+
+      # Add first transaction - should immediately reach consensus (now in term 1)
+      expect(MockInterface, :consensus_reached, fn log, {1, 1}, :latest ->
         assert log != nil
         :ok
       end)
 
       {:ok, raft, txn_id1} = Raft.add_transaction(raft, "first_transaction")
-      assert txn_id1 == {0, 1}
+      assert txn_id1 == {1, 1}
 
       # Verify consensus was reached and term is persisted
       log = Raft.log(raft)
-      assert Log.newest_transaction_id(log) == {0, 1}
-      assert Log.newest_safe_transaction_id(log) == {0, 1}
-      # Term persisted in log
-      assert Log.current_term(log) == 0
+      assert Log.newest_transaction_id(log) == {1, 1}
+      assert Log.newest_safe_transaction_id(log) == {1, 1}
+      # Term persisted in log (now term 1)
+      assert Log.current_term(log) == 1
 
       # Add second transaction - should also immediately reach consensus
-      expect(MockInterface, :consensus_reached, fn _, {0, 2}, :latest -> :ok end)
+      expect(MockInterface, :consensus_reached, fn _, {1, 2}, :latest -> :ok end)
 
       {:ok, raft, txn_id2} = Raft.add_transaction(raft, "second_transaction")
-      assert txn_id2 == {0, 2}
+      assert txn_id2 == {1, 2}
 
       # Verify both transactions are committed
       log = Raft.log(raft)
-      assert Log.newest_transaction_id(log) == {0, 2}
-      assert Log.newest_safe_transaction_id(log) == {0, 2}
+      assert Log.newest_transaction_id(log) == {1, 2}
+      assert Log.newest_safe_transaction_id(log) == {1, 2}
 
       # Verify log contains both transactions
       transactions = Log.transactions_from(log, {0, 0}, :newest)
       assert length(transactions) == 2
-      assert transactions == [{{0, 1}, "first_transaction"}, {{0, 2}, "second_transaction"}]
+      assert transactions == [{{1, 1}, "first_transaction"}, {{1, 2}, "second_transaction"}]
     end
 
     test "single-node cluster consensus works with different term numbers" do
-      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :leadership_changed, fn {:single, 0} -> :ok end)
+      # Start as follower
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
 
-      # Create single-node cluster
+      # Create single-node cluster - starts as follower
       raft = Raft.new(:single, [], InMemoryLog.new(), MockInterface)
 
-      # Simulate being in term 5 by persisting the term and updating the leader mode
+      # Simulate being in term 5 by going through election and updating term
       log = Raft.log(raft)
       {:ok, updated_log} = Log.save_current_term(log, 5)
-      raft = %{raft | mode: %{raft.mode | term: 5, log: updated_log}}
+
+      # Simulate election process to term 5 leader (without leadership_changed expectation since we're manually creating)
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
+
+      # Manually create leader mode in term 5 (simulating election outcome)
+      leader_mode = Bedrock.Raft.Mode.Leader.new(5, 0, [], updated_log, MockInterface)
+      raft = %{raft | mode: leader_mode}
 
       # Add transaction in term 5
       expect(MockInterface, :consensus_reached, fn _, {5, 1}, :latest -> :ok end)
@@ -929,10 +943,16 @@ defmodule Bedrock.RaftTest do
     end
 
     test "single-node cluster handles rapid sequential transactions" do
-      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
-      expect(MockInterface, :leadership_changed, fn {:rapid, 0} -> :ok end)
+      # Start as follower
+      expect(MockInterface, :timer, fn :election -> &mock_timer_cancel/0 end)
 
       raft = Raft.new(:rapid, [], InMemoryLog.new(), MockInterface)
+
+      # Go through election to become leader
+      expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
+      expect(MockInterface, :leadership_changed, fn {:rapid, 1} -> :ok end)
+
+      raft = Raft.handle_event(raft, :election, :timer)
 
       # Rapidly add 5 transactions
       transactions_data = ["txn1", "txn2", "txn3", "txn4", "txn5"]
@@ -941,30 +961,30 @@ defmodule Bedrock.RaftTest do
         transactions_data
         |> Enum.with_index(1)
         |> Enum.reduce({raft, []}, fn {data, index}, {current_raft, ids} ->
-          expect(MockInterface, :consensus_reached, fn _, {0, ^index}, :latest -> :ok end)
+          expect(MockInterface, :consensus_reached, fn _, {1, ^index}, :latest -> :ok end)
           {:ok, new_raft, txn_id} = Raft.add_transaction(current_raft, data)
           {new_raft, [txn_id | ids]}
         end)
 
-      # Verify all transactions have correct IDs
-      expected_ids = [{0, 1}, {0, 2}, {0, 3}, {0, 4}, {0, 5}]
+      # Verify all transactions have correct IDs (now in term 1)
+      expected_ids = [{1, 1}, {1, 2}, {1, 3}, {1, 4}, {1, 5}]
       assert Enum.reverse(txn_ids) == expected_ids
 
       # Verify final state
       log = Raft.log(final_raft)
-      assert Log.newest_transaction_id(log) == {0, 5}
-      assert Log.newest_safe_transaction_id(log) == {0, 5}
+      assert Log.newest_transaction_id(log) == {1, 5}
+      assert Log.newest_safe_transaction_id(log) == {1, 5}
 
       # Verify all transactions are in log
       all_transactions = Log.transactions_from(log, {0, 0}, :newest)
       assert length(all_transactions) == 5
 
       expected_transactions = [
-        {{0, 1}, "txn1"},
-        {{0, 2}, "txn2"},
-        {{0, 3}, "txn3"},
-        {{0, 4}, "txn4"},
-        {{0, 5}, "txn5"}
+        {{1, 1}, "txn1"},
+        {{1, 2}, "txn2"},
+        {{1, 3}, "txn3"},
+        {{1, 4}, "txn4"},
+        {{1, 5}, "txn5"}
       ]
 
       assert all_transactions == expected_transactions

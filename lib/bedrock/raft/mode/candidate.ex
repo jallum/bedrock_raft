@@ -97,7 +97,16 @@ defmodule Bedrock.Raft.Mode.Candidate do
       interface: interface
     }
     |> request_votes()
-    |> set_timer()
+    |> become_leader_with_quorum()
+    |> case do
+      :become_leader ->
+        # Return marker for single-node immediate election
+        :become_leader
+
+      {:ok, candidate} ->
+        # Multi-node cluster, set timer and wait for votes
+        candidate |> set_timer()
+    end
   end
 
   @impl true

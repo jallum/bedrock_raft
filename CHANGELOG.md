@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.5] - 2025-08-03
+
+### Changed
+- Single-node clusters now start as followers and go through election process like multi-node clusters
+- Candidate mode checks for immediate leadership eligibility in single-node scenarios
+
+### Fixed
+- Single-node clusters now increment terms during elections instead of remaining at term 0
+
 ## [0.9.4] - 2025-08-03
 
 ### Fixed
