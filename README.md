@@ -1,21 +1,13 @@
 # Bedrock Raft
 
-**TODO: Add description**
+An implementation of the RAFT consensus algorithm in Elixir that doesn't force a lot of opinions. You can bake the protocol into your own genservers, send messages and manage the logs how you like.
 
 ## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `bedrock` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:bedrock_raft, "~> 0.3.0"}
+    {:bedrock_raft, "~> 0.9"}
   ]
 end
 ```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/bedrock>.
-
