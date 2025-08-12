@@ -1,3 +1,5 @@
+[![Build Status](https://github.com/jallum/bedrock_raft/workflows/CI/badge.svg)](https://github.com/jallum/bedrock_raft/actions)
+
 # Bedrock Raft
 
 An implementation of the RAFT consensus algorithm in Elixir that doesn't force a lot of opinions. You can bake the protocol into your own genservers, send messages and manage the logs how you like.
