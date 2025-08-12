@@ -8,6 +8,7 @@ on:
 
 env:
   MIX_ENV: test
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 permissions:
   contents: read
@@ -81,4 +82,4 @@ jobs:
       run: mix dialyzer --halt-exit-status
 
     - name: Run tests
-      run: mix test
+      run: mix coveralls.github
