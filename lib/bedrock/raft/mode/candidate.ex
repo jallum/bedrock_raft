@@ -85,7 +85,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
           log :: Log.t(),
           interface :: module()
         ) ::
-          t()
+          t() | :become_leader
   def new(term, quorum, peers, log, interface) do
     %__MODULE__{
       term: term,
