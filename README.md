@@ -1,4 +1,4 @@
-[![Build Status](https://github.com/jallum/bedrock_raft/workflows/CI/badge.svg)](https://github.com/jallum/bedrock_raft/actions)
+[![Build Status](https://github.com/jallum/bedrock_raft/actions/workflows/elixir_ci.yaml/badge.svg)](https://github.com/jallum/bedrock_raft/actions/workflows/elixir_ci.yaml)
 
 # Bedrock Raft
 
