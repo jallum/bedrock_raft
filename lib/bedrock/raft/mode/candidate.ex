@@ -230,7 +230,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
   @spec vote_for(t(), Raft.election_term(), Raft.peer()) :: t()
   defp vote_for(t, term, candidate) do
     track_vote_sent(term, candidate)
-    apply(t.interface, :send_event, [candidate, {:vote, term}])
+    t.interface.send_event(candidate, {:vote, term})
     %{t | voted_for: candidate, term: term}
   end
 
@@ -239,7 +239,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
     my_newest_txn_id = Log.newest_transaction_id(t.log)
     track_request_votes(t.term, t.peers, my_newest_txn_id)
     event = {:request_vote, t.term, my_newest_txn_id}
-    t.peers |> Enum.each(&apply(t.interface, :send_event, [&1, event]))
+    t.peers |> Enum.each(&t.interface.send_event(&1, event))
     t
   end
 
@@ -252,7 +252,7 @@ defmodule Bedrock.Raft.Mode.Candidate do
   end
 
   @spec set_timer(t()) :: t()
-  defp set_timer(t), do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election])}
+  defp set_timer(t), do: %{t | cancel_timer_fn: t.interface.timer(:election)}
 
   # Raft log safety check: candidate is at least as up-to-date (term priority, then index)
   @spec log_at_least_as_up_to_date?(Raft.transaction_id(), Raft.transaction_id()) :: boolean()

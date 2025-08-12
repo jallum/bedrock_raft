@@ -5,9 +5,9 @@ defmodule Bedrock.RaftTest do
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
-  alias Bedrock.Raft.Mode.Leader
-  alias Bedrock.Raft.Mode.Follower
   alias Bedrock.Raft.Mode.Candidate
+  alias Bedrock.Raft.Mode.Follower
+  alias Bedrock.Raft.Mode.Leader
 
   import Mox
   alias Bedrock.Raft.MockInterface
@@ -923,11 +923,12 @@ defmodule Bedrock.RaftTest do
       log = Raft.log(raft)
       {:ok, updated_log} = Log.save_current_term(log, 5)
 
-      # Simulate election process to term 5 leader (without leadership_changed expectation since we're manually creating)
+      # Simulate election process to term 5 leader (without leadership_changed
+      # expectation since we're manually creating)
       expect(MockInterface, :timer, fn :heartbeat -> &mock_timer_cancel/0 end)
 
       # Manually create leader mode in term 5 (simulating election outcome)
-      leader_mode = Bedrock.Raft.Mode.Leader.new(5, 0, [], updated_log, MockInterface)
+      leader_mode = Leader.new(5, 0, [], updated_log, MockInterface)
       raft = %{raft | mode: leader_mode}
 
       # Add transaction in term 5

@@ -3,10 +3,10 @@ defmodule Bedrock.Raft.Mode.FollowerTest do
   use ExUnit.Case, async: true
   import Mox
 
+  alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
   alias Bedrock.Raft.MockInterface
   alias Bedrock.Raft.Mode.Follower
-  alias Bedrock.Raft.Log
 
   setup :verify_on_exit!
 

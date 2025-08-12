@@ -260,7 +260,7 @@ defmodule Bedrock.Raft.Mode.Follower do
   defp note_change_in_leadership_if_necessary(t, leader, term)
        when t.leader == :undecided or term > t.term do
     track_leadership_change(leader, term)
-    apply(t.interface, :leadership_changed, [{leader, term}])
+    t.interface.leadership_changed({leader, term})
     %{t | leader: leader, term: term}
   end
 
@@ -282,7 +282,7 @@ defmodule Bedrock.Raft.Mode.Follower do
             :behind
           end
 
-        :ok = apply(t.interface, :consensus_reached, [log, commit_transaction_id, consistency])
+        :ok = t.interface.consensus_reached(log, commit_transaction_id, consistency)
         %{t | log: log}
 
       :unchanged ->
@@ -307,10 +307,10 @@ defmodule Bedrock.Raft.Mode.Follower do
     newest_transaction_id = Log.newest_transaction_id(t.log)
     track_append_entries_ack_sent(t.term, t.me, newest_transaction_id)
 
-    apply(t.interface, :send_event, [
+    t.interface.send_event(
       t.leader,
       {:append_entries_ack, t.term, newest_transaction_id}
-    ])
+    )
 
     t
   end
@@ -318,7 +318,7 @@ defmodule Bedrock.Raft.Mode.Follower do
   @spec vote_for(t(), Raft.election_term(), Raft.peer()) :: t()
   defp vote_for(t, term, candidate) do
     track_vote_sent(term, candidate)
-    apply(t.interface, :send_event, [candidate, {:vote, term}])
+    t.interface.send_event(candidate, {:vote, term})
     %{t | voted_for: candidate, term: term}
   end
 
@@ -334,7 +334,7 @@ defmodule Bedrock.Raft.Mode.Follower do
   end
 
   @spec set_timer(t()) :: t()
-  defp set_timer(t), do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:election])}
+  defp set_timer(t), do: %{t | cancel_timer_fn: t.interface.timer(:election)}
 
   # Raft log safety check: candidate is at least as up-to-date (term priority, then index)
   @spec log_at_least_as_up_to_date?(Raft.transaction_id(), Raft.transaction_id()) :: boolean()

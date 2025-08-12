@@ -177,7 +177,7 @@ defmodule Bedrock.Raft.Mode.Leader do
         case Log.commit_up_to(t.log, new_txn_id) do
           {:ok, committed_log} ->
             track_consensus_reached(new_txn_id)
-            :ok = apply(t.interface, :consensus_reached, [committed_log, new_txn_id, :latest])
+            :ok = t.interface.consensus_reached(committed_log, new_txn_id, :latest)
             {:ok, %{t | log: committed_log}, new_txn_id}
 
           :unchanged ->
@@ -245,7 +245,7 @@ defmodule Bedrock.Raft.Mode.Leader do
           end
 
         :ok =
-          apply(t.interface, :consensus_reached, [log, newest_safe_transaction_id, consistency])
+          t.interface.consensus_reached(log, newest_safe_transaction_id, consistency)
 
         %{t | log: log} |> send_append_entries_to_followers(t.peers)
 
@@ -293,7 +293,7 @@ defmodule Bedrock.Raft.Mode.Leader do
     active_followers = active_followers(t)
 
     if active_followers < t.quorum do
-      case apply(t.interface, :quorum_lost, [active_followers, length(t.peers), t.term]) do
+      case t.interface.quorum_lost(active_followers, length(t.peers), t.term) do
         :step_down -> become_follower(t)
         :continue -> send_heartbeats_and_continue(t)
       end
@@ -379,10 +379,10 @@ defmodule Bedrock.Raft.Mode.Leader do
       newest_safe_transaction_id
     )
 
-    apply(t.interface, :send_event, [
+    t.interface.send_event(
       follower,
       {:append_entries, t.term, prev_transaction_id, transactions, newest_safe_transaction_id}
-    ])
+    )
 
     t
   end
@@ -404,5 +404,5 @@ defmodule Bedrock.Raft.Mode.Leader do
   end
 
   @spec set_timer(t()) :: t()
-  defp set_timer(t), do: %{t | cancel_timer_fn: apply(t.interface, :timer, [:heartbeat])}
+  defp set_timer(t), do: %{t | cancel_timer_fn: t.interface.timer(:heartbeat)}
 end

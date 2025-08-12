@@ -3,6 +3,7 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
   use ExUnit.Case, async: true
   import Mox
 
+  alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
   alias Bedrock.Raft.MockInterface
   alias Bedrock.Raft.Mode.Leader
@@ -289,8 +290,8 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       assert leader.id_sequence == 1
 
       # Verify the transaction is committed in the log
-      assert Bedrock.Raft.Log.newest_safe_transaction_id(leader.log) == {1, 1}
-      assert Bedrock.Raft.Log.newest_transaction_id(leader.log) == {1, 1}
+      assert Log.newest_safe_transaction_id(leader.log) == {1, 1}
+      assert Log.newest_transaction_id(leader.log) == {1, 1}
     end
 
     test "handles multiple transactions in single-node cluster correctly" do
@@ -319,11 +320,11 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       assert txn_id3 == {1, 3}
 
       # Verify all transactions are committed
-      assert Bedrock.Raft.Log.newest_safe_transaction_id(leader.log) == {1, 3}
-      assert Bedrock.Raft.Log.newest_transaction_id(leader.log) == {1, 3}
+      assert Log.newest_safe_transaction_id(leader.log) == {1, 3}
+      assert Log.newest_transaction_id(leader.log) == {1, 3}
 
       # Verify log contains all transactions
-      transactions = Bedrock.Raft.Log.transactions_from(leader.log, {0, 0}, :newest)
+      transactions = Log.transactions_from(leader.log, {0, 0}, :newest)
       assert length(transactions) == 3
       assert transactions == [{{1, 1}, "data1"}, {{1, 2}, "data2"}, {{1, 3}, "data3"}]
     end
@@ -343,7 +344,7 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       {:ok, leader, txn_id} = Leader.add_transaction(leader, "term_zero_data")
 
       assert txn_id == {0, 1}
-      assert Bedrock.Raft.Log.newest_safe_transaction_id(leader.log) == {0, 1}
+      assert Log.newest_safe_transaction_id(leader.log) == {0, 1}
     end
 
     test "single-node cluster doesn't send append_entries to any peers" do
@@ -376,8 +377,8 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
       # Verify that the log passed to consensus_reached has the transaction committed
       expect(MockInterface, :consensus_reached, fn committed_log, {1, 1}, :latest ->
         # The committed log should have the transaction as both newest and newest_safe
-        assert Bedrock.Raft.Log.newest_transaction_id(committed_log) == {1, 1}
-        assert Bedrock.Raft.Log.newest_safe_transaction_id(committed_log) == {1, 1}
+        assert Log.newest_transaction_id(committed_log) == {1, 1}
+        assert Log.newest_safe_transaction_id(committed_log) == {1, 1}
         :ok
       end)
 
@@ -385,8 +386,8 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
 
       assert txn_id == {1, 1}
       # Verify the leader's log is also correctly updated
-      assert Bedrock.Raft.Log.newest_safe_transaction_id(leader.log) == {1, 1}
-      assert Bedrock.Raft.Log.newest_transaction_id(leader.log) == {1, 1}
+      assert Log.newest_safe_transaction_id(leader.log) == {1, 1}
+      assert Log.newest_transaction_id(leader.log) == {1, 1}
     end
 
     test "leader initializes id_sequence from existing log" do
@@ -397,13 +398,13 @@ defmodule Bedrock.Raft.Mode.LeaderTest do
 
       # Pre-populate log with existing transactions using the Log protocol
       {:ok, log} =
-        Bedrock.Raft.Log.append_transactions(log, {0, 0}, [
+        Log.append_transactions(log, {0, 0}, [
           {{0, 1}, "transaction 1"},
           {{0, 2}, "transaction 2"},
           {{0, 3}, "transaction 3"}
         ])
 
-      {:ok, log} = Bedrock.Raft.Log.commit_up_to(log, {0, 3})
+      {:ok, log} = Log.commit_up_to(log, {0, 3})
 
       expect(MockInterface, :timestamp_in_ms, fn -> 1000 end)
       expect(MockInterface, :timer, fn :heartbeat -> &mock_cancel/0 end)

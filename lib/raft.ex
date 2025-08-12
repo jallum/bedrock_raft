@@ -227,7 +227,7 @@ defmodule Bedrock.Raft do
 
   def handle_event(t, event, from) do
     track_ignored_event(event, from)
-    apply(t.interface, :ignored_event, [event, from])
+    t.interface.ignored_event(event, from)
     t
   end
 
@@ -284,7 +284,7 @@ defmodule Bedrock.Raft do
 
     if current_leader != old_leader do
       current_term = term(t)
-      apply(t.interface, :leadership_changed, [{current_leader, current_term}])
+      t.interface.leadership_changed({current_leader, current_term})
       track_leadership_change(current_leader, current_term)
     end
 

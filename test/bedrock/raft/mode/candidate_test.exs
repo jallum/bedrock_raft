@@ -1,9 +1,9 @@
 defmodule Bedrock.Raft.Mode.CandidateTest do
   @moduledoc false
   use ExUnit.Case, async: true
-  alias Bedrock.Raft.Mode.Candidate
-  alias Bedrock.Raft.Log.InMemoryLog
   alias Bedrock.Raft.Log
+  alias Bedrock.Raft.Log.InMemoryLog
+  alias Bedrock.Raft.Mode.Candidate
   import Mox
   setup :verify_on_exit!
 
